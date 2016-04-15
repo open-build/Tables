@@ -34,7 +34,7 @@ class Command(BaseCommand):
                 storage = Storage(GoogleCredentialsModel, 'id', silo.owner, 'credential')
                 credential = storage.get()
                 credential_json = json.loads(credential.to_json())
-                self.stdout.write("%s" % credential_json)
+                #self.stdout.write("%s" % credential_json)
                 if credential is None or credential.invalid == True:
                     self.stdout.write("There was a Google credential problem with user: %s for gsheet %s" % (silo.owner, read.pk))
                     continue
@@ -42,5 +42,5 @@ class Command(BaseCommand):
                 suc = import_from_google_spreadsheet(credential_json, silo, read.resource_id)
                 if suc == False:
                     self.stdout.write("The Google sheet import failed for user: %s  with ghseet: %s" % (silo.owner, read.pk))
-            self.stdout.write('Successfully fetched the READ_ID, "%s", from Gsheet for %s' % (read.pk, silo.owner))
+                self.stdout.write('Successfully fetched the READ_ID, "%s", from Gsheet for %s' % (read.pk, silo.owner))
         self.stdout.write("done executing gsheet import command job")

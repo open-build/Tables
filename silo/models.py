@@ -5,14 +5,24 @@ from django.contrib import admin
 from django.contrib.auth.models import User
 from oauth2client.django_orm import CredentialsField
 from django.contrib.sites.models import Site
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 from datetime import datetime
+from django.conf import settings
+from rest_framework.authtoken.models import Token
+
+#New user created generate a token
+@receiver(post_save, sender=settings.AUTH_USER_MODEL)
+def create_auth_token(sender, instance=None, created=False, **kwargs):
+    if created:
+        Token.objects.create(user=instance)
 
 
 class TolaSites(models.Model):
-    name = models.CharField(blank=True, null=True, max_length="255")
-    agency_name = models.CharField(blank=True, null=True, max_length="255")
-    agency_url = models.CharField(blank=True, null=True, max_length="255")
-    activity_url = models.CharField(blank=True, null=True, max_length="255")
+    name = models.CharField(blank=True, null=True, max_length=255)
+    agency_name = models.CharField(blank=True, null=True, max_length=255)
+    agency_url = models.CharField(blank=True, null=True, max_length=255)
+    activity_url = models.CharField(blank=True, null=True, max_length=255)
     site = models.ForeignKey(Site)
     privacy_disclaimer = models.TextField(blank=True, null=True)
     created = models.DateTimeField(auto_now=False, blank=True, null=True)
@@ -39,6 +49,72 @@ class TolaSitesAdmin(admin.ModelAdmin):
     display = 'Tola Site'
     list_filter = ('name',)
     search_fields = ('name','agency_name')
+
+
+class Country(models.Model):
+    country = models.CharField("Country Name", max_length=255, blank=True)
+    code = models.CharField("2 Letter Country Code", max_length=4, blank=True)
+    description = models.TextField("Description/Notes", max_length=765,blank=True)
+    latitude = models.CharField("Latitude", max_length=255, null=True, blank=True)
+    longitude = models.CharField("Longitude", max_length=255, null=True, blank=True)
+    create_date = models.DateTimeField(null=True, blank=True)
+    edit_date = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ('country',)
+        verbose_name_plural = "Countries"
+
+    #onsave add create date or update edit date
+    def save(self, *args, **kwargs):
+        if self.create_date == None:
+            self.create_date = datetime.now()
+        self.edit_date = datetime.now()
+        super(Country, self).save()
+
+    #displayed in admin templates
+    def __unicode__(self):
+        return self.country
+
+
+class CountryAdmin(admin.ModelAdmin):
+    list_display = ('name', 'create_date', 'edit_date')
+    display = 'Country'
+
+
+TITLE_CHOICES = (
+    ('mr', 'Mr.'),
+    ('mrs', 'Mrs.'),
+    ('ms', 'Ms.'),
+)
+
+class TolaUser(models.Model):
+    title = models.CharField(blank=True, null=True, max_length=3, choices=TITLE_CHOICES)
+    name = models.CharField("Given Name", blank=True, null=True, max_length=100)
+    employee_number = models.IntegerField("Employee Number", blank=True, null=True)
+    user = models.OneToOneField(User, unique=True, related_name='tola_user')
+    country = models.ForeignKey(Country, blank=True, null=True)
+    activity_api_token = models.CharField(blank=True, null=True, max_length=255)
+    privacy_disclaimer_accepted = models.BooleanField(default=False)
+    created = models.DateTimeField(auto_now=False, blank=True, null=True)
+    updated = models.DateTimeField(auto_now=False, blank=True, null=True)
+
+    def __unicode__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        ''' On save, update timestamps as appropriate'''
+        if kwargs.pop('new_entry', True):
+            self.created = datetime.now()
+        else:
+            self.updated = datetime.now()
+        return super(TolaUser, self).save(*args, **kwargs)
+
+
+class TolaUserAdmin(admin.ModelAdmin):
+    list_display = ('name', 'country')
+    display = 'Tola User'
+    list_filter = ('country',)
+    search_fields = ('name','country__country','title')
 
 
 class GoogleCredentialsModel(models.Model):
@@ -70,17 +146,26 @@ class ReadTypeAdmin(admin.ModelAdmin):
 
 
 class Read(models.Model):
+    FREQUENCY_DISABLED = 'DISABLED'
     FREQUENCY_DAILY = 'daily'
     FREQUENCY_WEEKLY = 'weekly'
     FREQUENCY_CHOICES = (
         (FREQUENCY_DAILY, 'Daily'),
         (FREQUENCY_WEEKLY, 'Weekly'),
     )
+
+    AUT_OPUSH_FREQUENCY_CHOICES = (
+        (FREQUENCY_DISABLED, 'Disabled'),
+        (FREQUENCY_DAILY, 'Daily'),
+        (FREQUENCY_WEEKLY, 'Weekly'),
+    )
+
     owner = models.ForeignKey(User)
     type = models.ForeignKey(ReadType)
     read_name = models.CharField(max_length=100, blank=True, default='', verbose_name='source name') #RemoteEndPoint = name
     autopull = models.BooleanField(default=False)
     autopull_frequency = models.CharField(max_length=25, choices=FREQUENCY_CHOICES, null=True, blank=True)
+    autopush_frequency = models.CharField(max_length=25, choices=AUT_OPUSH_FREQUENCY_CHOICES, null=True, blank=True)
     description = models.TextField()
     read_url = models.CharField(max_length=100, blank=True, default='', verbose_name='source url') #RemoteEndPoint = link
     resource_id = models.CharField(max_length=200, null=True, blank=True) #RemoteEndPoint
@@ -157,7 +242,8 @@ class MergedSilosFieldMapping(models.Model):
 
 
 class SiloAdmin(admin.ModelAdmin):
-    list_display = ('owner', 'name', 'source', 'description', 'create_date')
+    list_display = ('owner', 'name', 'description', 'create_date')
+    search = ('owner__name','name')
     display = 'Data Feeds'
 
 
