@@ -73,7 +73,7 @@ def mergeTwoSilos(data, left_table_id, right_table_id):
                 mapped_value = ''
                 for col in left_cols:
                     try:
-                        if merge_type == 'Concatenate':
+                        if merge_type == 'Join':
                             mapped_value += ' ' + str(row[col])
                         elif merge_type == 'Sum' or merge_type == 'Avg':
                             try:
@@ -364,7 +364,7 @@ def showRead(request, id):
     Show a read data source and allow user to edit it
     """
     initial = {'owner': request.user}
-    excluded_fields=('autopull', 'autopull_frequency', 'read_url')
+    excluded_fields=('autopush_frequency', 'autopull_frequency', 'read_url')
     try:
         read_instance = Read.objects.get(pk=id)
         if read_instance.type.read_type != "CSV":
@@ -379,12 +379,14 @@ def showRead(request, id):
             read = form.save()
             if form.instance.type.read_type == "CSV":
                 return HttpResponseRedirect("/file/" + str(read.id) + "/")
+
+            if form.instance.autopull_frequency or form.instance.autopush_frequency:
+                messages.info(request, "Your table must have a unique column set for Autopull/Autopush to work.")
             return HttpResponseRedirect(reverse_lazy('listSilos'))
         else:
             messages.error(request, 'Invalid Form', fail_silently=False)
     else:
         form = ReadForm(exclude_list=excluded_fields, instance=read_instance, initial=initial)
-
     return render(request, 'read/read.html', {
         'form': form, 'read_id': id,
     })
@@ -880,6 +882,11 @@ def doMerge(request):
     left_table = None
     right_table = None
 
+    merged_silo_name = request.POST['merged_table_name']
+
+    if not merged_silo_name:
+        merged_silo_name = "Merging of %s and %s" % (left_table_id, right_table_id)
+
     try:
         left_table = Silo.objects.get(id=left_table_id)
     except Silo.DoesNotExist as e:
@@ -903,7 +910,7 @@ def doMerge(request):
         pass
 
     # Create a new silo
-    new_silo = Silo(name="Merging of %s and %s" % (left_table_id, right_table_id) , public=False, owner=request.user)
+    new_silo = Silo(name=merged_silo_name , public=False, owner=request.user)
     new_silo.save()
 
     # put the new silo data in mongo db.

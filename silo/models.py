@@ -87,6 +87,7 @@ TITLE_CHOICES = (
     ('ms', 'Ms.'),
 )
 
+
 class TolaUser(models.Model):
     title = models.CharField(blank=True, null=True, max_length=3, choices=TITLE_CHOICES)
     name = models.CharField("Given Name", blank=True, null=True, max_length=100)
@@ -150,11 +151,6 @@ class Read(models.Model):
     FREQUENCY_DAILY = 'daily'
     FREQUENCY_WEEKLY = 'weekly'
     FREQUENCY_CHOICES = (
-        (FREQUENCY_DAILY, 'Daily'),
-        (FREQUENCY_WEEKLY, 'Weekly'),
-    )
-
-    AUT_OPUSH_FREQUENCY_CHOICES = (
         (FREQUENCY_DISABLED, 'Disabled'),
         (FREQUENCY_DAILY, 'Daily'),
         (FREQUENCY_WEEKLY, 'Weekly'),
@@ -163,9 +159,8 @@ class Read(models.Model):
     owner = models.ForeignKey(User)
     type = models.ForeignKey(ReadType)
     read_name = models.CharField(max_length=100, blank=True, default='', verbose_name='source name') #RemoteEndPoint = name
-    autopull = models.BooleanField(default=False)
     autopull_frequency = models.CharField(max_length=25, choices=FREQUENCY_CHOICES, null=True, blank=True)
-    autopush_frequency = models.CharField(max_length=25, choices=AUT_OPUSH_FREQUENCY_CHOICES, null=True, blank=True)
+    autopush_frequency = models.CharField(max_length=25, choices=FREQUENCY_CHOICES, null=True, blank=True)
     description = models.TextField()
     read_url = models.CharField(max_length=100, blank=True, default='', verbose_name='source url') #RemoteEndPoint = link
     resource_id = models.CharField(max_length=200, null=True, blank=True) #RemoteEndPoint
@@ -227,6 +222,13 @@ class Silo(models.Model):
         return ', '.join([x.name for x in self.tags.all()])
 
 
+class SiloAdmin(admin.ModelAdmin):
+    list_display = ('owner', 'name', 'description', 'public','create_date')
+    search_fields = ('owner__last_name','owner__first_name','name')
+    list_filter = ('owner__last_name','public')
+    display = 'Data Feeds'
+
+
 class MergedSilosFieldMapping(models.Model):
     from_silo = models.ForeignKey(Silo, related_name='from_mappings')
     to_silo = models.ForeignKey(Silo, related_name='to_mappings')
@@ -239,12 +241,6 @@ class MergedSilosFieldMapping(models.Model):
 
     def __unicode__(self):
         return "Table I (%s) and Table II (%s) merged to create Table III (%s)" % (self.from_silo, self.to_silo, self.merged_silo)
-
-
-class SiloAdmin(admin.ModelAdmin):
-    list_display = ('owner', 'name', 'description', 'create_date')
-    search = ('owner__name','name')
-    display = 'Data Feeds'
 
 
 class UniqueFields(models.Model):
