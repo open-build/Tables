@@ -1,7 +1,6 @@
 *.log
 *.pot
 *.pyc
-#local.py
 # Python bytecode:
 *.py[co]
 
@@ -21,24 +20,37 @@ build
 # Logs:
 *.log
 
-#virtualenv
+# Virtualenv
 frds-venv/
 
-#allvritualenv
+# Allvritualenv
 venv/
+venv-tt/
 
-#conf
+# Conf
 conf/awstats.conf
 conf/
 djangocosign/
+local-dev.py
+local_secret.py
+client_secrets.json
 
-#Misc.
+# Fixtures
+read_types_local.json
+sites_local.json
+tags_local.json
+tolasites_local.json
+
+# Misc.
 .idea/
 .DS_Store
 media/
-local.py
-htdocs/tola/settings/local.py
-client_secrets.json
 *.crt
 *.key
 error.log
+*.secret
+*.secret.yml
+src/
+
+# Templates
+login_types.html

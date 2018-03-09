@@ -1,142 +1,117 @@
-from silo import views
-
-from django.conf.urls import patterns, include, url
-from django.views.generic import TemplateView
-from django.contrib.auth.models import User
-from rest_framework.routers import DefaultRouter
-from rest_framework.urlpatterns import format_suffix_patterns
-from rest_framework import routers, serializers, viewsets
+from django.contrib import auth
+from django.conf.urls import include, url
+from rest_framework import routers
 from django.conf import settings
 from django.conf.urls.static import static
-from django.contrib.auth.views import login, logout
-from silo.api import *
-
-# Uncomment the next two lines to enable the admin:
+from django.contrib.auth.views import login
 from django.contrib import admin
+
+from util import getImportApps
+from silo import views, gviews_v4
+from silo.api import *
+from tola import views as tola_views
+
 admin.autodiscover()
 
-#REST FRAMEWORK
-router = routers.DefaultRouter()
-router.register(r'silo', SiloViewSet)
+
+# REST FRAMEWORK
+router = routers.DefaultRouter(trailing_slash=False)
+router.register(r'silo', SiloViewSet, base_name="silos")
+router.register(r'usersilos', SilosByUser, base_name='usersilos')
+router.register(r'public_tables', PublicSiloViewSet, base_name="public_tables")
 router.register(r'users', UserViewSet)
-router.register(r'read', ReadViewSet)
+router.register(r'read', ReadViewSet, base_name='read')
 router.register(r'readtype', ReadTypeViewSet)
 router.register(r'tag', TagViewSet)
+router.register(r'country', CountryViewSet)
+router.register(r'customform', CustomFormViewSet, base_name='customform')
+router.register(r'organization', OrganizationViewSet)
+router.register(r'tolauser', TolaUserViewSet)
+router.register(r'workflowlevel1', WorkflowLevel1ViewSet)
+router.register(r'workflowlevel2', WorkflowLevel2ViewSet)
 
 
-urlpatterns = patterns('',
-                        #rest framework
-                        url(r'^api/', include(router.urls)),
-                        url(r'^api-auth/', include('rest_framework.urls', namespace='rest_framework')),
-                        url(r'^api/silodata/(?P<id>[0-9]+)/$', 'silo.api.silo_data_api', name='silo-detail'),
-                        url(r'^api/tolatablesdata/$', 'silo.api.tables_api_view', name='tolatablesdata'),
+urlpatterns =[
+    url(r'^api/', include(router.urls)),
+    url(r'^api-auth/', include('rest_framework.urls', namespace='rest_framework')),
+    url(r'^api/docs/', tola_views.schema_view),
 
-                        #index
-                        url(r'^$', 'silo.views.index', name='index'),
+    url(r'^admin/', include(admin.site.urls)),
+    url(r'^$', views.IndexView.as_view(), name='index'),
 
-                        #base template for layout
-                        url(r'^$', TemplateView.as_view(template_name='base.html')),
+    url(r'^source/new/', views.showRead, kwargs={'id': 0}, name='newRead'),
+    url(r'^onedrive', views.oneDrive, name='oneDriveRedirect'),
+    url(r'^import_onedrive/(?P<id>\d+)/$', views.oneDriveImport, name='import_onedrive'),
+    # url(r'^source/FormulaColumnF/', views.showRead, kwargs={'id': 0}, name='newRead'),
 
-                        #rest Custom Feed
-                        url(r'^api/custom/(?P<id>[0-9]+)/$','silo.views.customFeed',name='customFeed'),
+    url(r'^show_read/(?P<id>\w+)/$', views.showRead, name='showRead'),
 
-                        #ipt app specific urls
-                        #url(r'^indicators/', include('indicators.urls')),
+    url(r'^file/(?P<id>\w+)/$', views.uploadFile, name='uploadFile'),
+    url(r'^json', views.getJSON, name='getJSON'),
 
-                        #enable admin documentation:
-                        url(r'^admin/doc/', include('django.contrib.admindocs.urls')),
+    url(r'^onalogin/$', views.getOnaForms, name='getOnaForms'),
+    url(r'^provider_logout/(?P<provider>\w+)/$', views.providerLogout, name='providerLogout'),
+    url(r'^saveAndImportRead/$', views.saveAndImportRead, name='saveAndImportRead'),
+    url(r'^toggle_silo_publicity/$', views.toggle_silo_publicity, name='toggle_silo_publicity'),
 
-                        #enable the admin:
-                        url(r'^admin/', include(admin.site.urls)),
+    url(r'^silos', views.listSilos, name='listSilos'),
+    url(r'^silo_detail/(?P<silo_id>\w+)/$', views.siloDetail, name='siloDetail'),
+    url(r'^silo_edit/(?P<id>\w+)/$', views.editSilo, name='editSilo'),
+    url(r'^silo_delete/(?P<id>\w+)/$', views.deleteSilo, name='deleteSilo'),
+    url(r'^add_unique_fields', views.addUniqueFiledsToSilo, name='add_unique_fields_to_silo'),
+    url(r'^anonymize_silo/(?P<id>\w+)/$', views.anonymizeTable, name='anonymize_table'),
+    url(r'^identifyPII/(?P<silo_id>\w+)/$', views.identifyPII, name='identifyPII'),
+    url(r'^source_remove/(?P<silo_id>\w+)/(?P<read_id>\w+)/$', views.removeSource, name='removeSource'),
 
-                        #home
-                        url(r'^home', 'silo.views.listSilos', name='listSilos'),
+    url(r'^merge/(?P<id>\w+)/$', views.mergeForm, name='mergeForm'),
+    url(r'^merge_columns', views.mergeColumns, name='mergeColumns'),
+    url(r'^do_merge', views.do_merge, name='do_merge'),
+    url(r'^updateMergedTable/(?P<pk>\w+)/$', views.updateSiloData, name='updateMergedTable'),
 
-                        #read init form
-                        url(r'^source/new/', 'silo.views.showRead', kwargs={'id': 0}, name='newRead'),
-                        url(r'^show_read/(?P<id>\w+)/$', 'silo.views.showRead', name='showRead'),
+    url(r'^update_column', views.updateEntireColumn, name='updateColumn'),
+    url(r'^value_edit/(?P<id>\w+)/$', views.valueEdit, name='valueEdit'),
+    url(r'^value_delete/(?P<id>\w+)/$', views.valueDelete, name='valueDelete'),
+    url(r'^new_column/(?P<id>\w+)/$', views.newColumn, name='newColumn'),
+    url(r'^new_formula_column/(?P<pk>\w+)/$', views.newFormulaColumn, name='newFormulaColumn'),
+    url(r'^edit_filter/(?P<pk>\w+)/$', views.addColumnFilter, name='editColumnFilter'),
+    url(r'^edit_columns/(?P<id>\w+)/$', views.edit_columns, name='editColumns'),
+    url(r'^delete_column/(?P<id>\w+)/(?P<column>\w+)/$', views.deleteColumn, name='deleteColumn'),
+    url(r'^edit_column_order/(?P<pk>\w+)/$', views.editColumnOrder, name='editColumnOrder'),
+    url(r'^set_column_type/(?P<pk>\w+)/$', views.setColumnType, name='setColumnType'),
 
-                        #upload form
-                        url(r'^file/(?P<id>\w+)/$', 'silo.views.uploadFile', name='uploadFile'),
+    url(r'^export_silo_form/(?P<id>\w+)/$', views.export_silo_form, name='export_silo_form'),
+    url(r'^export/(?P<id>\w+)/$', views.export_silo, name='export_silo'),
 
-                        #getJSON data
-                        url(r'^json', 'silo.views.getJSON', name='getJSON'),
+    url(r'^export_to_gsheet/(?P<id>\d+)/$', gviews_v4.export_to_gsheet, name='export_new_gsheet'),
+    url(r'^export_to_gsheet/(?P<id>\d+)/$', gviews_v4.export_to_gsheet, name='export_existing_gsheet'),
+    url(r'^oauth2callback/$', gviews_v4.oauth2callback, name='oauth2callback'),
+    url(r'^import_gsheet/(?P<id>\d+)/$', gviews_v4.import_from_gsheet, name='import_gsheet'),
+    url(r'^get_sheets_from_google_spreadsheet/$', gviews_v4.get_sheets_from_google_spreadsheet, name='get_sheets'),
 
-                        #login data
-                        url(r'^onalogin/$', 'silo.views.getOnaForms', name='getOnaForms'),
-                        url(r'^provider_logout/(?P<provider>\w+)/$', 'silo.views.providerLogout', name='providerLogout'),
-                        url(r'^saveAndImportRead/$', 'silo.views.saveAndImportRead', name='saveAndImportRead'),
-                        url(r'^tolacon/$', 'silo.views.tolaCon', name='tolacon'),
-                        url(r'^toggle_silo_publicity/$', 'silo.views.toggle_silo_publicity', name='toggle_silo_publicity'),
+    url(r'^accounts/login/$', auth.views.login, name='login'),
+    url(r'^accounts/logout/$', tola_views.logout_view, name='logout'),
+    url(r'^accounts/register/$', tola_views.register, name='register'),
 
-                        ###DISPLAY
-                        #list all silos
-                        url(r'^silos', 'silo.views.listSilos', name='listSilos'),
-                        url(r'^add_unique_fields', 'silo.views.addUniqueFiledsToSilo', name='add_unique_fields_to_silo'),
+    url(r'^accounts/profile/$', tola_views.profile, name='profile'),
+    url(r'^board/$', tola_views.BoardView.as_view(), name='board'),
 
-                        #merge form
-                        url(r'^merge/(?P<id>\w+)/$', 'silo.views.mergeForm', name='mergeForm'),
+    url(r'^tables_login/$', views.tablesLogin, name='tables_login'),
 
-                        #merge select columns
-                        url(r'^merge_columns', 'silo.views.mergeColumns', name='mergeColumns'),
-                        url(r'^doMerge', 'silo.views.doMerge', name='doMerge'),
-                        url(r'^updateMergedTable/(?P<pk>\w+)/$', 'silo.views.updateMergeSilo', name='updateMergedTable'),
+    url(r'^renew_auto/(?P<read_pk>\d+)/(?P<operation>(pull|push))/$', views.renewAutoJobs, name='renewsAutoJobs'),
 
-                        #view silo detail
-                        url(r'^silo_detail/(?P<id>\w+)/$', 'silo.views.siloDetail', name='siloDetail'),
+    # Auth backend URL's
+    url('', include('django.contrib.auth.urls', namespace='auth')),
+    url('', include('social_django.urls', namespace='social')),
 
-                        url(r'^update_column', 'silo.views.updateEntireColumn', name='updateColumn'),
+    # reports and dashboards
+    url(r'^reports/', include('reports.urls')),
 
-                        #edit single silo value
-                        url(r'^value_edit/(?P<id>\w+)/$', 'silo.views.valueEdit', name='valueEdit'),
-
-                        #delete single silo value
-                        url(r'^value_delete/(?P<id>\w+)/$', 'silo.views.valueDelete', name='valueDelete'),
-
-                        #edit silo
-                        url(r'^silo_edit/(?P<id>\w+)/$', 'silo.views.editSilo', name='editSilo'),
-
-                        #delete a silo
-                        url(r'^silo_delete/(?P<id>\w+)/$','silo.views.deleteSilo', name='deleteSilo'),
-
-                        #new silo column
-                        url(r'^new_column/(?P<id>\w+)/$', 'silo.views.newColumn', name='newColumn'),
-
-                        #edit silo columns
-                        url(r'^edit_columns/(?P<id>\w+)/$', 'silo.views.editColumns', name='editColumns'),
-
-                        #delete silo column
-                        url(r'^delete_column/(?P<id>\w+)/(?P<column>\w+)/$', 'silo.views.deleteColumn', name='deleteColumn'),
-
-                        ###FEED
-                        url(r'^export/(?P<id>\w+)/$', 'silo.views.export_silo', name='export_silo'),
-                        url(r'^export_new_gsheet/(?P<id>\d+)/$', 'silo.google_views.export_new_gsheet', name='export_new_gsheet'),
-                        url(r'^export_gsheet/(?P<id>\d+)/$', 'silo.google_views.export_gsheet', name='export_existing_gsheet'),
-                        url(r'^oauth2callback/$', 'silo.google_views.oauth2callback', name='oauth2callback'),
-                        url(r'^import_gsheet/(?P<id>\d+)/$', 'silo.google_views.import_gsheet', name='import_gsheet'),
-
-                        #create a feed
-                        url(r'^create_feed', 'silo.views.createFeed', name='createFeed'),
-
-                        #local login COmment out local login for now
-                        #url(r'^login/$', 'django.contrib.auth.views.login', name='login'),
-                        #url(r'^accounts/login/$', 'django.contrib.auth.views.login', name='login'),
-
-                        url(r'^accounts/logout/$', 'tola.views.logout_view', name='logout'),
-
-                        #accounts
-                        url(r'^accounts/profile/$', 'tola.views.profile', name='profile'),
-                        #url(r'^accounts/register/$', 'tola.views.register', name='register'),
-
-                        #Auth backend URL's
-                        url('', include('django.contrib.auth.urls', namespace='auth')),
-                        url('', include('social.apps.django_app.urls', namespace='social')),
-
-                        #FAQ, Contact etc..
-                        url(r'^contact', 'tola.views.contact', name='contact'),
-                        url(r'^faq', 'tola.views.faq', name='faq'),
-                        url(r'^documentation', 'tola.views.documentation', name='documentation'),
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 
-)  + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-
+#add app domains and add the data types to the read_type.json
+folders = getImportApps()
+for app in folders:
+    url_construct = app + '/'
+    url_include = app + '.urls'
+    urlpatterns.append(url(url_construct,include(url_include)))

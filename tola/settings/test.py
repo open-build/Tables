@@ -1,5 +1,4 @@
-from base import *
-
+from local import *
 
 ########## IN-MEMORY TEST DATABASE
 DATABASES = {
@@ -12,13 +11,31 @@ DATABASES = {
         "PORT": "",
     },
 }
-"""Development settings and globals."""
+################ END OF IN-MEMORY TEST DATABASE #######################
+
+############ MONGO DB #####################
+MONGODB_DATABASES = {
+    "default": {
+        "name": "test",
+        "host": os.getenv("TOLATABLES_MONGODB_HOST", '127.0.0.1'),
+        "port": int(os.getenv("TOLATABLES_MONGODB_PORT", 27017)),
+        "username": "test",
+        "password": "test",
+    },
+}
+
+MONGO_URI = 'mongodb://{username}:{password}@{host}:{port}/{db}'.format(
+    db=MONGODB_DATABASES['default']['name'],
+    username=MONGODB_DATABASES['default']['username'],
+    password=MONGODB_DATABASES['default']['password'],
+    host=MONGODB_DATABASES['default']['host'],
+    port=MONGODB_DATABASES['default']['port'],
+)
+################ END OF MONGO DB #######################
 
 from os.path import join, normpath
 
 SECRET_KEY = r"!0^+)=t*ly6ycprf9@adsfsdfdfsdff#pa*3333*lp5k9ko7"
-
-#from mongoengine import connect
 
 ########## MANAGER CONFIGURATION
 # See: https://docs.djangoproject.com/en/dev/ref/settings/#admins
@@ -30,15 +47,10 @@ ADMINS = (
 MANAGERS = ADMINS
 ########## END MANAGER CONFIGURATION
 
-
 ########## DEBUG CONFIGURATION
 # See: https://docs.djangoproject.com/en/dev/ref/settings/#debug
 DEBUG = True
-
-# See: https://docs.djangoproject.com/en/dev/ref/settings/#template-debug
-TEMPLATE_DEBUG = DEBUG
 ########## END DEBUG CONFIGURATION
-
 
 ########## EMAIL CONFIGURATION
 # See: https://docs.djangoproject.com/en/dev/ref/settings/#email-backend
@@ -59,18 +71,11 @@ EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 
 ########## END EMAIL SETTINGS
 
-
-########## MongoDB Connect
-
-#connect('feeds')
-
-########## END DATABASE CONFIGURATION
-
 ########## GOOGLE CLIENT CONFIG ###########
 GOOGLE_STEP2_URI = ''
 GOOGLE_CLIENT_ID = ''
 GOOGLE_CLIENT_SECRET = ''
-
+GOOGLE_REDIRECT_URL = ''
 
 ########## CACHE CONFIGURATION
 # See: https://docs.djangoproject.com/en/dev/ref/settings/#caches
@@ -81,7 +86,4 @@ CACHES = {
 }
 ########## END CACHE CONFIGURATION
 
-
-
-
-
+CORS_ORIGIN_ALLOW_ALL = True
