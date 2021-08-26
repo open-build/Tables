@@ -9,19 +9,19 @@ import json
 from collections import OrderedDict
 from requests.auth import HTTPDigestAuth
 import tempfile
+import uuid
 
 from pymongo import MongoClient
 
 from django.conf import settings
 from django.core import files
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.core.urlresolvers import reverse_lazy
 from django.http import HttpResponseBadRequest,\
     HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
 from django.utils.encoding import smart_str, smart_text
-from django.utils.text import Truncator
 from django.db.models import Q
 from django.views.decorators.csrf import csrf_protect
 from django.contrib import messages
@@ -29,10 +29,11 @@ from django.shortcuts import redirect
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import logout
 from django.views.generic import View
+from django.contrib.auth.mixins import LoginRequiredMixin
 
 from gviews_v4 import import_from_gsheet_helper
 from silo.custom_csv_dict_reader import CustomDictReader
-from tola.util import importJSON, saveDataToSilo, getSiloColumnNames, \
+from tola.util import importJSON, save_data_to_silo, getSiloColumnNames, \
     parseMathInstruction, calculateFormulaColumn, makeQueryForHiddenRow, \
     getNewestDataDate, addColsToSilo, deleteSiloColumns, hideSiloColumns,  \
     getCompleteSiloColumnNames, setSiloColumnType, getColToTypeDict
@@ -41,9 +42,14 @@ from commcare.tasks import fetchCommCareData
 from .serializers import *
 from .models import Silo, Read, ReadType, ThirdPartyTokens, LabelValueStore, \
     Tag, UniqueFields, MergedSilosFieldMapping, TolaSites, PIIColumn, \
-    DeletedSilos, FormulaColumn
+    DeletedSilos, FormulaColumn, CeleryTask
 from .forms import get_read_form, UploadForm, SiloForm, MongoEditForm, \
     NewColumnForm, EditColumnForm, OnaLoginForm
+from .tasks import process_silo
+
+from django.contrib.contenttypes.models import ContentType
+from social_django.models import UserSocialAuth
+from tola.activity_proxy import get_workflowlevel1s
 
 logger = logging.getLogger("silo")
 client = MongoClient(settings.MONGO_URI)
@@ -51,7 +57,7 @@ db = client.get_default_database()
 ROLE_VIEW_ONLY = 'ViewOnly'
 
 
-class IndexView(View):
+class IndexView(LoginRequiredMixin, View):
     template_name = 'index.html'
 
     def _get_context_data(self, request):
@@ -81,39 +87,21 @@ class IndexView(View):
         return context
 
     def get(self, request, *args, **kwargs):
-        if request.user.is_authenticated:
-            context = self._get_context_data(request)
-            response = render(request, self.template_name, context)
-            if (request.COOKIES.get('auth_token', None) is None and
-                    request.user.is_authenticated):
-                response.set_cookie('auth_token', request.user.auth_token)
-            # if logged in redirect user to there list of tables
-            return redirect('/silos')
-        else:
-            # If users are accessing Track from Activity but they're not
-            # logged in, redirect them to the login process
-            if settings.TOLA_ACTIVITY_API_URL and settings.ACTIVITY_URL:
-                referer = request.META.get('HTTP_REFERER', '')
-                if settings.TOLA_ACTIVITY_API_URL in referer or \
-                        settings.ACTIVITY_URL in referer:
-                    return redirect('/login/tola')
-                else:
-                    return HttpResponseRedirect(settings.TABLES_LOGIN_URL)
-            else:
-                raise ImproperlyConfigured(
-                    "TOLA_ACTIVITY_API_URL and/or ACTIVITY_URL variable(s)"
-                    " not set. Please, set a value so the user can log in. If "
-                    "you are in a Dev environment, go to /login/ in order to "
-                    "sign in.")
+        context = self._get_context_data(request)
+        response = render(request, self.template_name, context)
+        if (request.COOKIES.get('auth_token', None) is None and
+                request.user.is_authenticated):
+            response.set_cookie('auth_token', request.user.auth_token)
+        # if logged in redirect user to there list of tables
+        return redirect('/silos')
 
 
 def tablesLogin(request):
     return render(request, 'tables_login.html')
 
 
-
 # fix now that not all mongo rows need to have the same column
-def mergeTwoSilos(mapping_data, lsid, rsid, msid):
+def merge_two_silos(mapping_data, lsid, rsid, msid):
     """
     @params
     mapping_data: data that describes how mapping is done between two silos
@@ -125,10 +113,8 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
 
     l_unmapped_cols = mappings.pop('left_unmapped_cols')
     r_unampped_cols = mappings.pop('right_unmapped_cols')
-
     merged_cols = []
 
-    #print("lsid:% rsid:%s msid:%s" % (lsid, rsid, msid))
     l_silo_data = LabelValueStore.objects(silo_id=lsid)
 
     r_silo_data = LabelValueStore.objects(silo_id=rsid)
@@ -158,7 +144,7 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
     try:
         rsilo = Silo.objects.get(pk=rsid)
     except Silo.DoesNotExist as e:
-        msg = "Right Table does not exist: table_id=%s" % rsid
+        msg = "Right Silo does not exist: silo_id=%s" % rsid
         logger.error(msg)
         return {'status': "danger",  'message': msg}
 
@@ -168,7 +154,7 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
         merged_cols.sort()
         addColsToSilo(msilo, merged_cols)
     except Silo.DoesNotExist as e:
-        msg = "Merged Table does not exist: table_id=%s" % msid
+        msg = "Merged Silo does not exist: silo_id=%s" % msid
         logger.error(msg)
         return {'status': "danger",  'message': msg}
 
@@ -176,11 +162,13 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
     r_unique_fields = rsilo.unique_fields.all()
 
     if not r_unique_fields:
-        msg = "The table, [%s], must have a unique column and it should be the same as the one specified in [%s] table." % (rsilo.name, lsilo.name)
+        msg = "The silo, [%s], must have a unique column and it should be " \
+              "the same as the one specified in [%s] silo." % (rsilo.name,
+                                                               lsilo.name)
         logger.error(msg)
         return {'status': "danger",  'message': msg}
 
-    # retrive the unique fields of the merged_silo
+    # retrieve the unique fields of the merged_silo
     m_unique_fields = msilo.unique_fields.all()
 
     # make sure that the unique_fields from right table are in the merged_table
@@ -188,15 +176,18 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
     for uf in r_unique_fields:
         if uf.name not in merged_cols: merged_cols.append(uf.name)
 
-        #make sure to set the same unique_fields in the merged_table
+        # make sure to set the same unique_fields in the merged_table
         if not m_unique_fields.filter(name=uf.name).exists():
-            unique_field, created = UniqueFields.objects.get_or_create(name=uf.name, silo=msilo, defaults={"name": uf.name, "silo": msilo})
+            UniqueFields.objects.get_or_create(
+                name=uf.name, silo=msilo,
+                defaults={"name": uf.name, "silo": msilo})
 
     # Get the correct set of data from the right table
     for row in r_silo_data:
         merged_row = OrderedDict()
         for k in row:
-            # Skip over those columns in the right table that sholdn't be in the merged_table
+            # Skip over those columns in the right table that
+            # shouldn't be in the merged_table
             if k not in merged_cols: continue
             merged_row[k] = row[k]
 
@@ -207,30 +198,37 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
         filter_criteria = {}
         for uf in r_unique_fields:
             try:
-                filter_criteria.update({str(uf.name): str(merged_row[uf.name])})
+                filter_criteria.update({str(uf.name): merged_row[uf.name]})
             except KeyError as e:
-                # when this excpetion occurs, it means that the col identified
-                # as the unique_col is not present in all rows of the right_table
-                logger.warning("The field, %s, is not present in table id=%s" % (uf.name, rsid))
+                # when this exception occurs, it means that the col identified
+                # as the unique_col is not present in
+                # all rows of the right_table
+                logger.warning("The field, %s, is not present in table id=%s"
+                               % (uf.name, rsid))
 
-        # adding the merged_table_id because the filter criteria should search the merged_table
+        # adding the merged_table_id because the filter criteria should
+        # search the merged_table
         filter_criteria.update({'silo_id': msid})
 
-        #this is an upsert operation.; note the upsert=True
-        db.label_value_store.update_one(filter_criteria, {"$set": merged_row}, upsert=True)
-
+        # this is an upsert operation.; note the upsert=True
+        db.label_value_store.update_one(filter_criteria,
+                                        {"$set": merged_row}, upsert=True)
 
     # Retrieve the unique_fields set by left table
     l_unique_fields = lsilo.unique_fields.all()
     if not l_unique_fields:
-        msg = "The table, [%s], must have a unique column and it should be the same as the one specified in [%s] table." % (lsilo.name, rsilo.name)
+        msg = "The silo, [%s], must have a unique column and it should be " \
+              "the same as the one specified in [%s] silo."\
+              % (lsilo.name, rsilo.name)
         logger.error(msg)
         return {'status': "danger",  'message': msg}
 
     for uf in l_unique_fields:
-        # if there are unique fields that are not in the right table then show error
+        # if there are unique fields that are not in the right table
+        # then show error
         if not r_unique_fields.filter(name=uf.name).exists():
-            msg = "Both tables (%s, %s) must have the same column set as unique fields" % (lsilo.name, rsilo.name)
+            msg = "Both silos (%s, %s) must have the same column set as " \
+                  "unique fields" % (lsilo.name, rsilo.name)
             logger.error(msg)
             return {"status": "danger", "message": msg}
 
@@ -243,7 +241,8 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
             left_cols = v['left_table_cols']
             right_col = v['right_table_col']
 
-            # if merge_type is specified then there must be multiple columns in the left_cols array
+            # if merge_type is specified then there must be multiple columns
+            # in the left_cols array
             if merge_type:
                 mapped_value = ''
                 for col in left_cols:
@@ -252,9 +251,11 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
                             if mapped_value == '':
                                 mapped_value = float(row[col])
                             else:
-                                mapped_value = float(mapped_value) + float(row[col])
+                                mapped_value = float(mapped_value) \
+                                               + float(row[col])
                         except Exception as e:
-                            msg = 'Failed to apply %s to column, %s : %s ' % (merge_type, col, e.message)
+                            msg = 'Failed to apply %s to column, %s : %s '\
+                                  % (merge_type, col, e.message)
                             logger.error(msg)
                             return {'status': "danger",  'message': msg}
                     else:
@@ -263,19 +264,22 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
                 # Now calculate avg if the merge_type was actually "Avg"
                 if merge_type == 'Avg':
                     mapped_value = mapped_value / len(left_cols)
-            # only one col in left table is mapped to one col in the right table.
+            # only one col in left table is mapped to one col
+            #  in the right table.
             else:
                 col = str(left_cols[0])
                 if col == "silo_id": continue
                 try:
                     mapped_value = row[col]
                 except KeyError as e:
-                    # When updating data in merged_table at a later time, it is possible
-                    # the origianl source tables may have had some columns removed in which
-                    # we might get a KeyError so in that case we just skip it.
+                    # When updating data in merged_table at a later time, it is
+                    # possible the original source tables may have had some
+                    # columns removed in which we might get a KeyError so in
+                    # that case we just skip it.
                     continue
 
-            #right_col is used as in index of merged_row because one or more left cols map to one col in right table
+            # right_col is used as in index of merged_row because one or more
+            #  left cols map to one col in right table
             merged_row[right_col] = mapped_value
 
         # Get data from left unmapped columns:
@@ -286,22 +290,24 @@ def mergeTwoSilos(mapping_data, lsid, rsid, msid):
         filter_criteria = {}
         for uf in l_unique_fields:
             try:
-                filter_criteria.update({str(uf.name): str(merged_row[uf.name])})
+                filter_criteria.update({str(uf.name): merged_row[uf.name]})
             except KeyError:
-                # when this excpetion occurs, it means that the col identified
+                # when this exception occurs, it means that the col identified
                 # as the unique_col is not present in all rows of the left_table
-                msg ="The field, %s, is not present in table id=%s" % (uf.name, lsid)
+                msg = "The field, %s, is not present in table id=%s"\
+                      % (uf.name, lsid)
                 logger.warning(msg)
 
         filter_criteria.update({'silo_id': msid})
 
-        # override the silo_id and create_date columns values to make sure they're not set
-        # to the values that are in left table or right table
+        # override the silo_id and create_date columns values to make sure
+        # they're not set to the values that are in left table or right table
         merged_row["silo_id"] = msid
         merged_row["create_date"] = timezone.now()
 
         # Now update or insert a row if there is no matching record available
-        res = db.label_value_store.update_one(filter_criteria, {"$set": merged_row}, upsert=True)
+        db.label_value_store.update_one(filter_criteria,
+                                        {"$set": merged_row}, upsert=True)
 
     return {'status': "success",  'message': "Merged data successfully"}
 
@@ -443,14 +449,34 @@ def appendTwoSilos(mapping_data, lsid, rsid, msid):
 # Edit existing silo meta data
 @csrf_protect
 @login_required
-def editSilo(request, id):
+def edit_silo(request, id):
     """
     Edit the meta data and description for each Table (silo)
     :param request:
     :param id: Unique table ID
     :return: silo edit form
     """
+
     edited_silo = Silo.objects.get(pk=id)
+    user_wfl1s = get_workflowlevel1s(request.user)
+    request_user_org = None
+    owner_user_org = None
+
+    if(hasattr(request.user, 'tola_user') and
+            hasattr(edited_silo.owner, 'tola_user')):
+        request_user_org = request.user.tola_user.organization
+        owner_user_org = edited_silo.owner.tola_user.organization
+
+    is_silo_shared_with_user = Silo.objects.filter(
+        Q(pk=id, shared__id=request.user.pk) |
+        Q(pk=id, workflowlevel1__level1_uuid__in=user_wfl1s)).exists()
+
+    if not (edited_silo.owner == request.user or edited_silo.public
+            or is_silo_shared_with_user
+            or (edited_silo.share_with_organization
+                and request_user_org == owner_user_org)):
+        return render(request, '404.html', status=404)
+
     if request.method == 'POST':  # If the form has been submitted...
         tags = request.POST.getlist('tags')
         post_data = request.POST.copy()
@@ -469,7 +495,8 @@ def editSilo(request, id):
 
                 post_data.appendlist('tags', tag.id)
 
-        form = SiloForm(data=post_data, instance=edited_silo)
+        form = SiloForm(user=request.user, data=post_data,
+                        instance=edited_silo)
         if form.is_valid():
             form.save()
             return HttpResponseRedirect('/silos/')
@@ -548,8 +575,8 @@ def saveAndImportRead(request):
         silo.reads.add(read)
 
     # import data into this silo
-    saveDataToSilo(silo, data, read, request.user)
-    silo_detail_url = reverse_lazy('siloDetail', args=[silo.pk])
+    save_data_to_silo(silo, data, read, request.user)
+    silo_detail_url = reverse_lazy('silo_detail', args=[silo.pk])
     return HttpResponse(silo_detail_url)
 
 
@@ -676,18 +703,28 @@ def showRead(request, id):
     """
     Show a read data source and allow user to edit it
     """
-    excluded_fields = ['gsheet_id', 'resource_id', 'token', 'create_date', 'edit_date', 'token', 'autopush_expiration', 'autopull_expiration']
+    excluded_fields = ['gsheet_id', 'resource_id', 'token', 'create_date',
+                       'edit_date', 'token', 'autopush_expiration',
+                       'autopull_expiration']
     initial = {'owner': request.user}
     data = None
-    access_token = None
+    onedrive_redirect_uri = settings.ONEDRIVE_REDIRECT_URI
+    onedrive_client_id = settings.ONEDRIVE_CLIENT_ID
 
     try:
         read_instance = Read.objects.get(pk=id)
         read_type = read_instance.type.read_type
     except Read.DoesNotExist as e:
         read_instance = None
-        read_type = request.GET.get("type", "CSV")
-        initial['type'] = ReadType.objects.get(read_type=read_type)
+        if request.method == 'POST':
+            read_type_id = request.POST.get("type")
+            rt = ReadType.objects.get(id=read_type_id)
+        else:
+            read_type_name = request.GET.get("type", "CSV")
+            rt = ReadType.objects.get(read_type=read_type_name)
+
+        initial['type'] = rt
+        read_type = rt.read_type
 
     try:
         get_tables = Silo.objects.all().filter(reads__id=id)
@@ -695,93 +732,111 @@ def showRead(request, id):
         get_tables = None
 
     if read_type == "GSheet Import" or read_type == "ONA":
-        excluded_fields = excluded_fields + ['username', 'password', 'file_data','autopush_frequency']
+        excluded_fields = excluded_fields + ['username', 'password',
+                                             'file_data',
+                                             'autopush_frequency',
+                                             'onedrive_access_token',
+                                             'onedrive_file']
     elif read_type == "JSON":
-        excluded_fields = excluded_fields + ['file_data','autopush_frequency']
+        excluded_fields = excluded_fields + ['file_data',
+                                             'onedrive_access_token',
+                                             'onedrive_file',
+                                             'autopush_frequency']
     elif read_type == "Google Spreadsheet":
-        excluded_fields = excluded_fields + ['username', 'password', 'file_data', 'autopull_frequency']
+        excluded_fields = excluded_fields + ['username', 'password',
+                                             'file_data',
+                                             'autopull_frequency',
+                                             'onedrive_access_token',
+                                             'onedrive_file']
     elif read_type == "CSV":
-        excluded_fields = excluded_fields + ['username', 'password', 'autopush_frequency', 'autopull_frequency', 'read_url']
+        excluded_fields = excluded_fields + ['username', 'password',
+                                             'autopush_frequency',
+                                             'autopull_frequency',
+                                             'read_url',
+                                             'onedrive_access_token',
+                                             'onedrive_file']
     elif read_type == "OneDrive":
-        user = User.objects.get(username__exact=request.user)
-        social = user.social_auth.get(provider='microsoft-graph')
-        access_token = social.extra_data['access_token']
-
-        """
-        # Todo catch expired token
-        response = requests.get(
-            'https://graph.microsoft.com/v1.0/me/drive/root/children',
-            headers={
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': 'application/json',
-                'Authorization': 'Bearer ' + social.extra_data['access_token']
-            }
-        )
-        data = response.json()
-        print(response.status_code)
-        if response.status_code == 401:
-            logout(request)
-            redirect('/')
-
-        print(data)
-        """
-        excluded_fields = excluded_fields + ['username', 'password', 'file_data','autopush_frequency']
-        excluded_fields = excluded_fields + ['autopull_frequency', 'read_url']
+        excluded_fields = excluded_fields + ['username', 'password',
+                                             'file_data',
+                                             'autopush_frequency',
+                                             'autopull_frequency', 'read_url']
 
     if request.method == 'POST':
-        form = get_read_form(excluded_fields)(request.POST, request.FILES, instance=read_instance)
+        form = get_read_form(excluded_fields)(request.POST, request.FILES,
+                                              instance=read_instance)
+
         if form.is_valid():
             read = form.save(commit=False)
             if read.username and read.password:
-                basic_auth = base64.encodestring('%s:%s' % (read.username, read.password))[:-1]
+                basic_auth = base64.encodestring('%s:%s' % (read.username,
+                                                            read.password)
+                                                 )[:-1]
                 read.token = basic_auth
                 read.password = None
             if form.instance.autopull_frequency:
-                read.autopull_expiration = datetime.datetime.now() + datetime.timedelta(days=170)
+                read.autopull_expiration = datetime.datetime.now() + \
+                                           datetime.timedelta(days=170)
             if form.instance.autopush_frequency:
-                read.autopush_expiration = datetime.datetime.now() + datetime.timedelta(days=170)
+                read.autopush_expiration = datetime.datetime.now() + \
+                                           datetime.timedelta(days=170)
 
             read.save()
             if form.instance.type.read_type == "CSV":
                 return HttpResponseRedirect("/file/" + str(read.id) + "/")
             elif form.instance.type.read_type == "JSON":
-                return HttpResponseRedirect(reverse_lazy("getJSON")+ "?read_id=%s" % read.id)
+                return HttpResponseRedirect(reverse_lazy("getJSON") +
+                                            "?read_id=%s" % read.id)
             if form.instance.type.read_type == "OneDrive":
-                return HttpResponseRedirect("/import_onedrive/" + str(read.id) + "/")
+                extra_data = {"token_type": "Bearer", "access_token":
+                    form.cleaned_data["onedrive_access_token"]}
 
-            if form.instance.autopull_frequency or form.instance.autopush_frequency:
-                messages.info(request, "Your table must have a unique column set for Autopull/Autopush to work.")
-            return HttpResponseRedirect(reverse_lazy('listSilos'))
+                social_auth, created = UserSocialAuth.objects.get_or_create(
+                        provider='microsoft-graph', user=request.user)
+                social_auth.extra_data = extra_data
+                social_auth.uid = str(uuid.uuid4())
+                social_auth.save()
+
+                return HttpResponseRedirect("/import_onedrive/" + str(
+                    read.id) + "/")
+
+            if form.instance.autopull_frequency or \
+                    form.instance.autopush_frequency:
+                messages.info(request,
+                              "Your table must have a unique column set for "
+                              "Autopull/Autopush to work.")
+            return HttpResponseRedirect(reverse_lazy('list_silos'))
         else:
             messages.error(request, 'Invalid Form', fail_silently=False)
     else:
-        form = get_read_form(excluded_fields)(instance=read_instance, initial=initial)
+        form = get_read_form(excluded_fields)(instance=read_instance,
+                                              initial=initial)
 
     return render(request, 'read/read.html', {
         'form': form,
         'read_id': id,
         'data': data,
         'get_tables': get_tables,
-        'access_token': access_token
+        'redirect_uri': onedrive_redirect_uri,
+        'client_id': onedrive_client_id,
     })
 
 
 @login_required
 def oneDriveImport(request, id):
     """
-    Get the forms owned or shared with the logged in user
+    Import a file from OneDrive
     :param request:
-    :return: list of Ona forms paired with action buttons
+    :return: HttpResponseRedirect to the imported file
     """
     read_obj = Read.objects.get(pk=id)
 
-    # print(read_obj.onedrive_file)
     user = User.objects.get(username__exact=request.user)
     social = user.social_auth.get(provider='microsoft-graph')
     access_token = social.extra_data['access_token']
 
     request_meta = requests.get(
-        'https://graph.microsoft.com/v1.0/me/drive/items/' + read_obj.onedrive_file + '',
+        'https://graph.microsoft.com/v1.0/me/drive/items/' +
+        read_obj.onedrive_file,
         headers={
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json',
@@ -793,7 +848,8 @@ def oneDriveImport(request, id):
         return redirect('/')
 
     request_content = requests.get(
-        'https://graph.microsoft.com/v1.0/me/drive/items/'+read_obj.onedrive_file+'/content',
+        'https://graph.microsoft.com/v1.0/me/drive/items/' +
+        read_obj.onedrive_file+'/content',
         headers={
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'application/json',
@@ -808,13 +864,7 @@ def oneDriveImport(request, id):
     read_obj.file_data = files.File(tmp, name=file_meta["name"])
     read_obj.save()
 
-    print(file_meta["name"])
     return HttpResponseRedirect("/file/" + str(id) + "/")
-
-    #read_obj.file_data
-
-    return render(request, 'silo/onedrive.html', {
-    })
 
 
 @login_required
@@ -824,8 +874,7 @@ def oneDrive(request):
     :param request:
     :return: list of Ona forms paired with action buttons
     """
-    return render(request, 'silo/onedrive.html', {
-    })
+    return render(request, 'silo/onedrive.html', {})
 
 
 @login_required
@@ -848,8 +897,18 @@ def uploadFile(request, id):
             silo.reads.add(read_obj)
             silo_id = silo.id
 
-            reader = CustomDictReader(read_obj.file_data)
-            saveDataToSilo(silo, reader, read_obj)
+            task = CeleryTask.objects.create(task_id=None,
+                              task_status=None,
+                              content_object=read_obj)
+
+            async_res = process_silo.apply_async(
+                        (silo.id, read_obj.id)
+            )
+
+            task.task_id = async_res.id
+            task.task_status = CeleryTask.TASK_CREATED
+            task.save()
+
             return HttpResponseRedirect('/silo_detail/' + str(silo_id) + '/')
         else:
             messages.error(request, "There was a problem with reading the contents of your file" + form.errors)
@@ -896,26 +955,45 @@ def getJSON(request):
 def toggle_silo_publicity(request):
     silo_id = request.GET.get('silo_id', None)
     silo = Silo.objects.get(pk=silo_id)
-    silo.public = not silo.public
-    silo.save()
-    return HttpResponse("Your change has been saved")
+
+    if silo.owner == request.user:
+        silo.public = not silo.public
+        silo.save()
+        return HttpResponse('Your change has been saved', status=200)
+    else:
+        return HttpResponse('You can not  change publicity of this table',
+                            status=403)
 
 
 # SILOS
 @login_required
-def listSilos(request):
+def list_silos(request):
     """
     Each silo is listed with links to details
     """
     user = User.objects.get(username__exact=request.user)
+    user_wfl1s = get_workflowlevel1s(user)
 
-    #get all of the silos
+    # get all of the silos
     own_silos = Silo.objects.filter(owner=user).prefetch_related('reads')
 
-    shared_silos = Silo.objects.filter(shared__id=user.pk).prefetch_related("reads")
+    shared_silos = Silo.objects.filter(
+        Q(shared__id=user.pk) |
+        Q(share_with_organization=True,
+          owner__tola_user__organization=user.tola_user.organization) |
+        Q(workflowlevel1__level1_uuid__in=user_wfl1s)).\
+        exclude(owner=user).prefetch_related("reads")
 
-    public_silos = Silo.objects.filter(Q(public=True) & ~Q(owner=user)).prefetch_related("reads")
-    return render(request, 'display/silos.html',{'own_silos':own_silos, "shared_silos": shared_silos, "public_silos": public_silos})
+    public_silos = Silo.objects.filter(
+        Q(public=True) & ~Q(owner=user)).prefetch_related("reads")
+
+    return render(request,
+                  'display/silos.html',
+                  {
+                      'own_silos':own_silos,
+                      "shared_silos": shared_silos,
+                      "public_silos": public_silos
+                  })
 
 
 def addUniqueFiledsToSilo(request):
@@ -959,27 +1037,80 @@ def updateEntireColumn(request):
             )
         messages.success(request, "Successfully, changed the %s column value to %s" % (colname, new_val))
 
-    return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': silo_id}))
+    return HttpResponseRedirect(reverse_lazy('silo_detail', kwargs={'silo_id': silo_id}))
 
 
 @login_required
-def siloDetail(request, silo_id):
+def silo_detail(request, silo_id):
     """
     Silo Detail
     """
 
     silo = Silo.objects.get(pk=silo_id)
+    user_wfl1s = get_workflowlevel1s(request.user)
     cols = []
-    # col_types = getColToTypeDict(silo)
-    data = []
     query = makeQueryForHiddenRow(json.loads(silo.rows_to_hide))
 
-    if silo.owner == request.user or silo.public == True or request.user in silo.shared.all():
+    """
+    Note:    There is a chance a service gets stuck in "tasks_running" if a
+    service worker terminates unexpectedly and the task id
+    could not be removed from the task.
+    """
+
+    tasks_running = Read.objects.filter(
+        silos=silo.id,
+        tasks__task_status__in=[CeleryTask.TASK_CREATED,
+                                CeleryTask.TASK_IN_PROGRESS]).count()
+
+    tasks_failed = Read.objects.filter(
+        silos=silo.id,
+        tasks__task_status=CeleryTask.TASK_FAILED).count()
+
+    silo_read_ids = Read.objects.filter(silos=silo.id).values_list('id',
+                                                                   flat=True)
+
+    celery_tasks = CeleryTask.objects.filter(
+        object_id__in=silo_read_ids,
+        content_type=ContentType.objects.get_for_model(Read)
+    ).values_list('object_id', 'task_id', 'task_status')
+
+    tasks = map(
+        lambda t: {'read_id': t[0], 'task_id': t[1], 'task_status': t[2]},
+        celery_tasks
+    )
+
+    request_user_org = None
+    owner_user_org = None
+    if hasattr(request.user, 'tola_user') and hasattr(silo.owner, 'tola_user'):
+        request_user_org = request.user.tola_user.organization
+        owner_user_org = silo.owner.tola_user.organization
+
+    is_silo_shared_with_user = Silo.objects.filter(
+        Q(pk=silo_id, shared__id=request.user.pk) |
+        Q(pk=silo_id, workflowlevel1__level1_uuid__in=user_wfl1s)).exists()
+
+    if (silo.owner == request.user or silo.public
+            or is_silo_shared_with_user
+            or (silo.share_with_organization
+                and request_user_org == owner_user_org)):
         cols.append('_id')
+        cols.append('id')
         cols.extend(getSiloColumnNames(silo_id))
     else:
-        messages.warning(request,"You do not have permission to view this table.")
-    return render(request, "display/silo.html", {"silo": silo, "cols": cols, "query": query})
+        messages.error(request,
+                       "You do not have permission to view this table.")
+    return render(
+        request,
+        "display/silo.html",
+        {
+            "silo": silo,
+            "cols": cols,
+            "query": query,
+            "tasks_running": tasks_running,
+            "tasks_failed": tasks_failed,
+            "tasks": tasks
+        }
+    )
 
 
 @login_required
@@ -1003,7 +1134,7 @@ def updateSiloData(request, pk):
             mergeType = merged_silo_mapping.merge_type
 
             if mergeType == "merge":
-                res = mergeTwoSilos(mapping, left_table_id, right_table_id, merge_table_id)
+                res = merge_two_silos(mapping, left_table_id, right_table_id, merge_table_id)
             else:
                 res = appendTwoSilos(mapping, left_table_id, right_table_id, merge_table_id)
             if res['status'] == "success":
@@ -1038,7 +1169,7 @@ def updateSiloData(request, pk):
             #put in the new records
             for x in range(0,len(data[0])):
                 for entry in data[1][x]:
-                    saveDataToSilo(silo,entry,data[0][x],request.user)
+                    save_data_to_silo(silo,entry,data[0][x],request.user)
             for read in reads:
                 if read.type.read_type == "GSheet Import":
                     greturn = import_from_gsheet_helper(request.user, silo.id, None, read.resource_id, None, True)
@@ -1066,7 +1197,7 @@ def updateSiloData(request, pk):
             #delete legacy objects
             lvss = LabelValueStore.objects(silo_id=silo.pk,__raw__={ "$or" : [{"read_id" : {"$not" : { "$exists" : "true" }}}, {"read_id" : {"$in" : [-1,""]} } ]})
 
-    return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': pk},))
+    return HttpResponseRedirect(reverse_lazy('silo_detail', kwargs={'silo_id': pk},))
 
 
 #return tuple: (list of list of dictionaries[[{}]] data, 0=falure 1=success 2=N/A, messages)
@@ -1208,9 +1339,9 @@ def edit_columns(request, id):
         if form.is_valid():  # All validation rules pass
             for label, value in form.cleaned_data.iteritems():
                 # update the column name if it doesn't have delete in it
-                if "_delete" not in label and str(label) != str(value) and \
-                                label != "silo_id" and label != "suds" and \
-                                label != "id":
+                if (not label.endswith('_delete') and str(label) != str(value)
+                    and label != "silo_id" and label != "suds"
+                        and label != "id"):
                     # update a column in the existing silo
                     db.label_value_store.update_many(
                         {
@@ -1229,7 +1360,7 @@ def edit_columns(request, id):
                     silo.columns = json.dumps(column_obj)
                     silo.save()
                 # if we see delete then it's a check box to delete that column
-                elif "_delete" in label and value == 1:
+                elif label.endswith('_delete') and value == 1:
                     column = label.replace("_delete", "")
                     db.label_value_store.update_many(
                         {
@@ -1240,18 +1371,17 @@ def edit_columns(request, id):
                         },
                         False
                     )
-                    column_name = label.split("_")[0]
                     try:
-                        silo.formulacolumns.filter(column_name).delete()
+                        silo.formulacolumns.filter(column).delete()
                     except Exception as e:
                         pass
-
-                    to_delete.append(column_name)
+                    to_delete.append(column)
 
             if len(to_delete):
                 deleteSiloColumns(silo, to_delete)
             messages.info(request, 'Updates Saved', fail_silently=False)
-            return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': silo.id}))
+            return HttpResponseRedirect(reverse_lazy(
+                'silo_detail', kwargs={'silo_id': silo.id}))
         else:
             messages.error(request,
                            'ERROR: There was a problem with your request',
@@ -1324,18 +1454,22 @@ def do_merge(request):
     try:
         left_table = Silo.objects.get(id=left_table_id)
     except Silo.DoesNotExist:
-        return HttpResponse('Could not find the left table with id={}'.format(
-                             left_table_id))
+        msg = 'Could not find the left table with id={}'.format(left_table_id)
+        logger.info(msg)
+        return JsonResponse({'status': 'danger', 'message': msg})
 
     try:
         right_table = Silo.objects.get(id=right_table_id)
     except Silo.DoesNotExist:
-        return HttpResponse('Could not find the right table with id={}'.format(
-                             right_table_id))
+        msg = 'Could not find the right table with id={}'.format(
+            right_table_id)
+        logger.info(msg)
+        return JsonResponse({'status': 'danger', 'message': msg})
 
     data = request.POST.get('columns_data', None)
     if not data:
-        return HttpResponse('No columns data passed')
+        msg = 'No columns data passed'
+        return JsonResponse({'status': 'danger', 'message': msg})
 
     # Create a new silo
     new_silo = Silo.objects.create(name=merged_silo_name, public=False,
@@ -1347,7 +1481,8 @@ def do_merge(request):
     merge_table_id = new_silo.pk
 
     if merge_type == 'merge':
-        res = mergeTwoSilos(data, left_table_id, right_table_id, merge_table_id)
+        res = merge_two_silos(data, left_table_id,
+                            right_table_id, merge_table_id)
     else:
         res = appendTwoSilos(
             data, left_table_id, right_table_id, merge_table_id
@@ -1357,12 +1492,13 @@ def do_merge(request):
         new_silo.delete()
         return JsonResponse(res)
 
-    mapping = MergedSilosFieldMapping(from_silo=left_table, to_silo=right_table,
-                                      merged_silo=new_silo, mapping=data,
-                                      merge_type=merge_type)
+    mapping = MergedSilosFieldMapping(
+        from_silo=left_table, to_silo=right_table,
+        merged_silo=new_silo, mapping=data, merge_type=merge_type)
     mapping.save()
-    return HttpResponseRedirect(
-        reverse_lazy('siloDetail', kwargs={'silo_id': merge_table_id}))
+    res.update({'silo_url': reverse_lazy(
+        'silo_detail', kwargs={'silo_id': merge_table_id})})
+    return JsonResponse(res)
 
 
 # EDIT A SINGLE VALUE STORE
@@ -1394,7 +1530,6 @@ def valueEdit(request,id):
                 create_date = datetime.datetime.fromtimestamp(item['create_date']['$date']/1000)
                 data[k] = create_date.strftime('%Y-%m-%d')
             else:
-                k = Truncator(re.sub('\s+', ' ', k).strip()).chars(40)
                 data[k] = v
 
         keys = item.keys()
@@ -1523,7 +1658,7 @@ def anonymizeTable(request, id):
     else:
         messages.info(request, "No PIIF columns were found.")
 
-    return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': id}))
+    return HttpResponseRedirect(reverse_lazy('silo_detail', kwargs={'silo_id': id}))
 
 
 @login_required
@@ -1556,7 +1691,7 @@ def removeSource(request, silo_id, read_id):
         silo = Silo.objects.get(pk=silo_id)
     except Silo.DoesNotExist as e:
         messages.error(request,"Table with id=%s does not exist." % silo_id)
-        return HttpResponseRedirect(reverse_lazy('listSilos'))
+        return HttpResponseRedirect(reverse_lazy('list_silos'))
 
     try:
         read = silo.reads.get(pk=read_id)
@@ -1568,7 +1703,7 @@ def removeSource(request, silo_id, read_id):
     except Read.DoesNotExist as e:
         messages.error(request,"Datasource with id=%s does not exist." % read_id)
 
-    return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': silo_id},))
+    return HttpResponseRedirect(reverse_lazy('silo_detail', kwargs={'silo_id': silo_id},))
 
 
 @login_required
@@ -1599,7 +1734,7 @@ def newFormulaColumn(request, pk):
         addColsToSilo(silo,[column_name], {column_name : 'float'})
         silo.save()
 
-        return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': pk},))
+        return HttpResponseRedirect(reverse_lazy('silo_detail', kwargs={'silo_id': pk},))
 
     silo = Silo.objects.get(pk=pk)
     cols = getSiloColumnNames(pk)
@@ -1625,10 +1760,10 @@ def editColumnOrder(request, pk):
 
         except Silo.DoesNotExist as e:
             messages.error(request, "silo not found")
-            return HttpResponseRedirect(reverse_lazy('listSilos'))
+            return HttpResponseRedirect(reverse_lazy('list_silos'))
 
 
-        return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': pk},))
+        return HttpResponseRedirect(reverse_lazy('silo_detail', kwargs={'silo_id': pk},))
 
     silo = Silo.objects.get(pk=pk)
     cols = getSiloColumnNames(pk)
@@ -1646,7 +1781,7 @@ def addColumnFilter(request, pk):
         silo.rows_to_hide = hide_rows
 
         silo.save()
-        return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': pk},))
+        return HttpResponseRedirect(reverse_lazy('silo_detail', kwargs={'silo_id': pk},))
 
 
     silo = Silo.objects.get(pk=pk)
@@ -1705,7 +1840,7 @@ def setColumnType(request, pk):
     #should only deal with post request since this will operate with a modal
     if request.method != 'POST':
         messages.error(request, '%s request is invalid' % request.method)
-        return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': pk}))
+        return HttpResponseRedirect(reverse_lazy('silo_detail', kwargs={'silo_id': pk}))
 
     silo = Silo.objects.get(pk=pk)
     column = request.POST.get('column_for_type')
@@ -1714,4 +1849,4 @@ def setColumnType(request, pk):
     msg = setSiloColumnType(int(pk), column, col_type)
     messages.add_message(request, msg[0], msg[1])
 
-    return HttpResponseRedirect(reverse_lazy('siloDetail', kwargs={'silo_id': pk},))
+    return HttpResponseRedirect(reverse_lazy('silo_detail', kwargs={'silo_id': pk},))

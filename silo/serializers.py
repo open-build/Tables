@@ -42,13 +42,27 @@ class SiloSerializer(serializers.HyperlinkedModelSerializer):
 
     class Meta:
         model = Silo
-        fields = ('owner', 'name', 'reads', 'description', 'create_date', 'id', 'data','shared','tags','public', 'data_count')
+        fields = ('owner', 'name', 'reads', 'description', 'create_date',
+                  'id', 'data', 'shared', 'tags', 'public', 'data_count',
+                  'columns')
         # removind depth for now, it may be breaking the post method
         # depth =1
 
     def get_data(self, obj):
         link = "/api/silo/" + str(obj.id) + "/data"
         return self.context['request'].build_absolute_uri(link)
+
+
+class CustomFormSerializer(serializers.ModelSerializer):
+    fields = serializers.JSONField()
+    level1_uuid = serializers.CharField(max_length=255)
+    tola_user_uuid = serializers.CharField(max_length=255)
+    form_uuid = serializers.CharField(max_length=255)
+
+    class Meta:
+        model = Silo
+        fields = ('id', 'name', 'description', 'fields', 'level1_uuid',
+                  'tola_user_uuid', 'form_uuid')
 
 
 class TagSerializer(serializers.HyperlinkedModelSerializer):
@@ -72,10 +86,11 @@ class ReadTypeSerializer(serializers.HyperlinkedModelSerializer):
 
 
 class SiloModelSerializer(serializers.ModelSerializer):
+    id = serializers.ReadOnlyField()
 
     class Meta:
         model = Silo
-        fields = ('name', 'description', 'create_date', 'public')
+        fields = ('id', 'name', 'description', 'create_date', 'public')
         depth = 1
 
 

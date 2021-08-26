@@ -1,7 +1,7 @@
 ---
 pipeline:
   mongo-setup:
-    image: mongo:3.0
+    image: mongo:3.4.10
     commands:
       - sleep 15
       - 'mongo --host mongo --eval "db.getSiblingDB(''test'').createUser({user:''test'', pwd:''test'', roles:[{role:''dbOwner'', db:''test''}]});"'
@@ -10,28 +10,28 @@ pipeline:
     image: python:${PYTHON_VERSION}
     environment:
       - TOLATABLES_MONGODB_HOST=mongo
+      - CELERY_BROKER_URL=redis://redis@redis:6379/0
     secrets: [SECRET_PASS]
     commands:
       - pip install -r requirements/ci.txt
+      - flake8 */tests/ */forms.py tola/ --exclude=settings,migrations,models.py,tola/__init__.py
       - python manage.py test
     when:
-      event: [push, tag]
+      event: [pull_request, push, tag]
 
-  build-docker-image:
+  build-docker-image-tag:
     image: plugins/docker
     insecure: true
     registry: registry.tola.io
     repo: registry.tola.io/toladata/tolatables
     file: Dockerfile
-    tags:
-      - ${DRONE_COMMIT_SHA}
+    auto_tag: true
     secrets: [DOCKER_USERNAME, DOCKER_PASSWORD]
     when:
-      event: [push, tag]
-      branch: [master, demo, staging, dev-v2]
+      event: [tag]
       status: [success]
 
-  trigger-deployment:
+  trigger-dev-deployment:
     image: quay.io/ukhomeofficedigital/drone-trigger:latest
     verbose: true
     drone_server: http://drone.humanitec.io
@@ -40,10 +40,9 @@ pipeline:
     repo: Humanitec/deployment
     branch: master
     deploy_to: marathon
-    params: "APP_ID=/tolatables,APP_GROUP=toladata,APP_NAME=TolaTables,APP_BRANCH=${DRONE_COMMIT_BRANCH},APP_COMMIT=${DRONE_COMMIT_SHA},APP_TAG=${DRONE_TAG},APP_IMAGE=registry.tola.io/toladata/tolatables:${DRONE_COMMIT_SHA}"
+    params: "APP_ID=/tolatables,APP_GROUP=toladata,APP_NAME=TolaTables,APP_BRANCH=dev-v2,APP_COMMIT=${DRONE_COMMIT_SHA},APP_TAG=${DRONE_TAG},APP_IMAGE=registry.tola.io/toladata/tolatables:${DRONE_TAG##v}"
     when:
-      event: [push, tag]
-      branch: [master, demo, staging, dev-v2]
+      event: [tag]
       status: [success]
 
   notify:
@@ -59,6 +58,8 @@ pipeline:
 services:
   mongo:
     image: mongo:3.4.10
+  redis:
+    image: redis:4.0
 
 matrix:
   PYTHON_VERSION:

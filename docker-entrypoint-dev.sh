@@ -9,5 +9,13 @@ python manage.py shell -c "from django.contrib.auth.models import User; User.obj
 echo "Loading basic initial data"
 python manage.py loadinitialdata
 
+echo "Starting celery worker"
+celery_cmd="celery -A tola worker -l info -f celery.log"
+$celery_cmd &
+
 echo "Running the server"
-PYTHONUNBUFFERED=1 python manage.py runserver 0.0.0.0:8000
+if [ "$nginx" == "true" ]; then
+    PYTHONUNBUFFERED=1 gunicorn -b 0.0.0.0:8080 tola.wsgi --reload
+else
+    PYTHONUNBUFFERED=1 python manage.py runserver 0.0.0.0:8080
+fi

@@ -1,11 +1,15 @@
 import json
 import django_filters
+from urlparse import urljoin
+from urllib import urlencode
+from datetime import datetime
 
-from django.http import (HttpResponseBadRequest, JsonResponse, HttpResponse,
-                         QueryDict)
+from django.http import HttpResponseBadRequest, JsonResponse, HttpResponse
 from django.db.models import Q
-from django.utils import timezone
-from django.shortcuts import get_object_or_404
+from django.conf import settings
+from django.contrib.auth.models import User
+from django.shortcuts import get_object_or_404, redirect
+from django.urls import reverse
 
 from rest_framework import viewsets, filters, permissions
 from rest_framework.decorators import (detail_route, list_route, api_view,
@@ -20,9 +24,10 @@ from rest_framework import mixins, status
 from .serializers import *
 from .models import (Silo, LabelValueStore, Country, WorkflowLevel1,
                      WorkflowLevel2, TolaUser, Read, ReadType)
-from silo.permissions import *
+from silo.permissions import (IsOwnerOrReadOnly, ReadIsOwnerViewOrWrite,
+                          SiloIsOwnerOrCanRead)
 from tola.util import (getSiloColumnNames, getCompleteSiloColumnNames,
-                       saveDataToSilo)
+                       save_data_to_silo, JSONEncoder)
 
 
 class TolaUserViewSet(viewsets.ModelViewSet):
@@ -103,30 +108,30 @@ class PublicSiloViewSet(viewsets.ReadOnlyModelViewSet):
             return HttpResponseBadRequest("The silo_id = %s is invalid" % id)
 
         silo = Silo.objects.get(pk=id)
-        if silo.public == False:
-            return HttpResponse("This table is not public. You must use the private API.")
+        if not silo.public:
+            url = reverse('silos-data', kwargs={'id': silo.pk})
+            return redirect(u'{}?{}'.format(url, request.GET))
+
         query = request.GET.get('query',"{}")
         filter_fields = json.loads(query)
 
-        shown_cols = set(json.loads(request.GET.get('shown_cols',json.dumps(getSiloColumnNames(id)))))
+        shown_cols = set(
+            json.loads(
+                request.GET.get('shown_cols',
+                                json.dumps(getSiloColumnNames(id)))))
 
-
-        recordsTotal = LabelValueStore.objects(silo_id=id, **filter_fields).count()
-
-
-        #print("offset=%s length=%s" % (offset, length))
-        #page_size = 100
-        #page = int(request.GET.get('page', 1))
-        #offset = (page - 1) * page_size
-        #if page > 0:
-        # workaround until the problem of javascript not increasing the value of length is fixed
-        data = LabelValueStore.objects(silo_id=id, **filter_fields).exclude('create_date', 'edit_date', 'silo_id','read_id')
+        # workaround until the problem of javascript
+        # not increasing the value of length is fixed
+        data = LabelValueStore.objects(
+            silo_id=id,
+            **filter_fields).exclude('create_date', 'edit_date',
+                                     'silo_id', 'read_id')
 
         for col in getCompleteSiloColumnNames(id):
             if col not in shown_cols:
                 data = data.exclude(col)
 
-        sort = str(request.GET.get('sort',''))
+        sort = str(request.GET.get('sort', ''))
         data = data.order_by(sort)
         json_data = json.loads(data.to_json())
         return JsonResponse(json_data, safe=False)
@@ -135,8 +140,13 @@ class PublicSiloViewSet(viewsets.ReadOnlyModelViewSet):
 class CustomFormViewSet(mixins.CreateModelMixin,
                         mixins.UpdateModelMixin,
                         viewsets.GenericViewSet):
-    serializer_class = SiloSerializer
+    serializer_class = CustomFormSerializer
     queryset = Silo.objects.all()
+    _default_columns = [
+        {'name': 'submitted_by', 'type': 'text'},
+        {'name': 'submission_date', 'type': 'date'},
+        {'name': 'submission_time', 'type': 'time'}
+    ]
 
     def create(self, request, *args, **kwargs):
         """
@@ -145,25 +155,42 @@ class CustomFormViewSet(mixins.CreateModelMixin,
         if not request.user.is_superuser:
             return Response(status=status.HTTP_403_FORBIDDEN)
 
+        # serialize and validate data
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # get fields' values
+        form_uuid = serializer.data['form_uuid']
+        level1_uuid = serializer.data['level1_uuid']
+        tola_user_uuid = serializer.data['tola_user_uuid']
+        form_name = serializer.data['name']
+        read_name = serializer.data['name']
+        columns = serializer.data['fields']
+        columns += self._default_columns
+        description = serializer.data.get('description', '')
+
+        # we need to convert the dict into a JSON to be stored
+        columns = json.dumps(columns)
+
         try:
-            level1_uuid = request.POST['level1_uuid']
-            tola_user_uuid = request.POST['tola_user_uuid']
             wkflvl1 = WorkflowLevel1.objects.get(level1_uuid=level1_uuid)
             tola_user = TolaUser.objects.get(tola_user_uuid=tola_user_uuid)
-            table_name = request.POST['name'].lower().replace(' ', '_')
-            table_name += '_' + wkflvl1.name.lower().replace(' ', '_')
-            read_name = request.POST['name']
-            columns = request.POST['fields']
-        except (WorkflowLevel1.DoesNotExist, TolaUser.DoesNotExist, KeyError) \
-                as e:
-            return Response(e, status=status.HTTP_400_BAD_REQUEST)
-        description = request.POST.get('description', '')
+        except (WorkflowLevel1.DoesNotExist, TolaUser.DoesNotExist) as e:
+            return Response(
+                e.message, status=status.HTTP_400_BAD_REQUEST)
 
+        url_subpath = '/activity/forms/{}/view'.format(form_uuid)
+        form_url = urljoin(settings.ACTIVITY_URL, url_subpath)
         read = Read.objects.create(
             owner=tola_user.user,
             type=ReadType.objects.get(read_type='CustomForm'),
             read_name=read_name,
+            read_url=form_url
         )
+
+        table_name = '{} - {}'.format(form_name, wkflvl1.name)
+        if len(table_name) > 255:
+            table_name = table_name[:255]
         silo = Silo.objects.create(
             owner=tola_user.user,
             name=table_name,
@@ -171,12 +198,13 @@ class CustomFormViewSet(mixins.CreateModelMixin,
             organization=tola_user.organization,
             public=False,
             columns=columns,
+            form_uuid=form_uuid
         )
 
         silo.reads.add(read)
         silo.workflowlevel1.add(wkflvl1)
 
-        serializer = self.serializer_class(silo, context={'request': request})
+        serializer = SiloModelSerializer(silo)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -190,14 +218,19 @@ class CustomFormViewSet(mixins.CreateModelMixin,
         wkflvl1 = silo.workflowlevel1.first()
         read = silo.reads.first()
 
-        try:
-            table_name = request.data['name'].lower().replace(' ', '_')
-            table_name += '_' + wkflvl1.name.lower().replace(' ', '_')
-            read_name = request.data['name']
-            columns = request.data['fields']
-        except KeyError as e:
-            return Response(e, status=status.HTTP_400_BAD_REQUEST)
-        description = request.data.get('description', '')
+        # serialize and validate data
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # get fields' values
+        table_name = serializer.data['name'].lower().replace(' ', '_')
+        table_name += '_' + wkflvl1.name.lower().replace(' ', '_')
+        read_name = serializer.data['name']
+        columns = serializer.data['fields']
+        description = serializer.data.get('description', '')
+
+        # we need to convert the dict into a JSON to be stored
+        columns = json.dumps(columns)
 
         read.read_name = read_name
         read.save()
@@ -207,7 +240,7 @@ class CustomFormViewSet(mixins.CreateModelMixin,
         silo.columns = columns
         silo.save()
 
-        serializer = self.get_serializer(silo)
+        serializer = SiloModelSerializer(silo)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @detail_route(methods=['GET'],)
@@ -232,9 +265,32 @@ class CustomFormViewSet(mixins.CreateModelMixin,
         if 'silo_id' in request.data and 'data' in request.data:
             silo_id = request.data['silo_id']
             data = request.data['data']
+            submitted_by_uuid = request.data.get('submitted_by', None)
         else:
             return Response({'detail': 'Missing data.'},
                             status=status.HTTP_400_BAD_REQUEST)
+
+        if data:
+            submitted_by = None
+
+            # get timestamp
+            now = datetime.now()
+            submission_date = now.strftime('%Y-%m-%d')
+            submission_time = now.strftime('%H:%M:%S')
+
+            # if there's a submitted_by uuid, get user's name from db
+            if submitted_by_uuid:
+                submitted_by = TolaUser.objects.values_list(
+                    'name', flat=True).get(tola_user_uuid=submitted_by_uuid)
+
+            # add values to the default columns
+            for default_col in self._default_columns:
+                if default_col['type'] == 'text' and submitted_by:
+                    data.update({'submitted_by': submitted_by})
+                elif default_col['type'] == 'date':
+                    data.update({'submission_date': submission_date})
+                elif default_col['type'] == 'time':
+                    data.update({'submission_time': submission_time})
 
         try:
             silo = Silo.objects.get(pk=silo_id)
@@ -242,7 +298,7 @@ class CustomFormViewSet(mixins.CreateModelMixin,
             return Response({'detail': 'Not found.'},
                             status=status.HTTP_404_NOT_FOUND)
         else:
-            saveDataToSilo(silo, [data], silo.reads.first())
+            save_data_to_silo(silo, [data], silo.reads.first())
             return Response({'detail': 'It was successfully saved.'},
                             status=status.HTTP_200_OK)
 
@@ -272,54 +328,91 @@ class SiloViewSet(viewsets.ReadOnlyModelViewSet):
     lookup_field = 'id'
     # this permission sets seems to break the default permissions set by the restframework
     # permission_classes = (IsOwnerOrReadOnly,)
-    permission_classes = (IsAuthenticated, Silo_IsOwnerOrCanRead,)
-    filter_fields = ('owner__username','shared__username','id','tags','public')
+    permission_classes = (IsAuthenticated, SiloIsOwnerOrCanRead)
+    filter_fields = ('owner__username','shared__username',
+                     'id','tags','public')
     filter_backends = (filters.DjangoFilterBackend,)
 
     def get_queryset(self):
         user_uuid = self.request.GET.get('user_uuid')
         if user_uuid is not None:
-            if TolaUser.objects.filter(tola_user_uuid=user_uuid).count() == 1:
-                tola_user = TolaUser.objects.prefetch_related('user').get(tola_user_uuid=user_uuid)
-                user = tola_user.user
-                return Silo.objects.filter(Q(owner=user) | Q(public=True) | Q(shared=user))
-            else:
+            try:
+                tola_user = TolaUser.objects.get(tola_user_uuid=user_uuid)
+            except TolaUser.DoesNotExist:
                 return Silo.objects.filter(owner=None)
+            else:
+                user = tola_user.user
+                return Silo.objects.filter(
+                    Q(owner=user) | Q(public=True) | Q(shared=user)
+                    | Q(owner__tola_user__organization=tola_user.organization))
         else:
             user = self.request.user
             if user.is_superuser:
-                #pagination.PageNumberPagination.page_size = 200
                 return Silo.objects.all()
 
-            return Silo.objects.filter(Q(owner=user) | Q(public=True))
+            return Silo.objects.filter(Q(owner=user) | Q(public=True) |
+                                       Q(owner__tola_user__organization=\
+                                             user.tola_user.organization))
 
     @detail_route()
     def data(self, request, id):
         # calling get_object applies the permission classes to this query
         self.get_object()
 
+        # get the mongo collection
+        collection = LabelValueStore._get_collection()
+
         draw = int(request.GET.get("draw", 1))
         offset = int(request.GET.get('start', -1))
         length = int(request.GET.get('length', 10))
 
         # filtering syntax is the mongodb syntax
-        query = request.GET.get('query',"{}")
-        filter_fields = json.loads(query)
+        query = request.GET.get('query', '{}')
+        group = request.GET.get('group', '{}')
+        sort = str(request.GET.get('sort', '{}'))
+        query_fields = json.loads(query)
+        group_fields = json.loads(group)
+        sort_fields = json.loads(sort)
 
-        recordsTotal = LabelValueStore.objects(silo_id=id, **filter_fields).count()
+        # creating the aggregation pipeline
+        pipeline = [
+            {'$match': {'$and': [{'silo_id': int(id)}, query_fields]}},
+            {'$project': {
+                'create_date': 0,
+                'edit_date': 0,
+                'silo_id': 0,
+                'read_id': 0
+            }}
+        ]
+        if group_fields:
+            pipeline.append({'$group': group_fields})
+        if sort_fields:
+            pipeline.append({'$sort': sort_fields})
 
-        # workaround until the problem of javascript not increasing the value of length is fixed
+        count_pipeline = pipeline + [{'$count': 'count'}]
+        count_cur = collection.aggregate(pipeline=count_pipeline)
+        list_count = list(count_cur)
+        if list_count:
+            count_result = list_count[0]
+            records_total = count_result['count']
+        else:
+            records_total = 0
+
+        # workaround until the problem of javascript not increasing
+        # the value of length is fixed
         if offset >= 0:
             length = offset + length
-            data = LabelValueStore.objects(silo_id=id, **filter_fields).exclude('create_date', 'edit_date', 'silo_id','read_id').skip(offset).limit(length)
-        else:
-            data = LabelValueStore.objects(silo_id=id, **filter_fields).exclude('create_date', 'edit_date', 'silo_id','read_id')
+            pipeline.append({'$skip': offset})
+            pipeline.append({'$limit': length})
 
-        sort = str(request.GET.get('sort',''))
-        data = data.order_by(sort)
-        json_data = json.loads(data.to_json())
+        pipeline_cur = collection.aggregate(pipeline=pipeline)
+        pipeline_result = list(pipeline_cur)
+        data = JSONEncoder().encode(pipeline_result)
+        json_data = json.loads(data)
 
-        return JsonResponse({"data": json_data, "draw": draw, "recordsTotal": recordsTotal, "recordsFiltered": recordsTotal}, safe=False)
+        return JsonResponse({"data": json_data, "draw": draw,
+                             "recordsTotal": records_total,
+                             "recordsFiltered": records_total},  safe=False)
 
 
 class TagViewSet(viewsets.ModelViewSet):
@@ -336,13 +429,14 @@ class ReadViewSet(viewsets.ModelViewSet):
     This viewset automatically provides `list` and `retrieve`, actions.
     """
     serializer_class = ReadSerializer
-    permission_classes = (IsAuthenticated, Read_IsOwnerViewOrWrite,)
+    permission_classes = (IsAuthenticated, ReadIsOwnerViewOrWrite)
 
     def get_queryset(self):
         user = self.request.user
         if user.is_superuser:
             return Read.objects.all()
-        return Read.objects.filter(Q(owner=user) | Q(silos__public=True) | Q(silos__shared=self.request.user))
+        return Read.objects.filter(Q(owner=user) | Q(silos__public=True) |
+                                   Q(silos__shared=self.request.user))
 
 
 class ReadTypeViewSet(viewsets.ModelViewSet):
