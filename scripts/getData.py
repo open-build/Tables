@@ -12,7 +12,7 @@ from os.path import exists
 import json
 import unicodedata
 import sys
-import urllib2
+from urllib.request import urlopen
 from datetime import date
 from activitydb.models import Country, Program
 
@@ -26,7 +26,7 @@ program_country = 1
 def getAllData(url, type, program_country):
 
     # set url for json feed here
-    json_file = urllib2.urlopen(url)
+    json_file = urllib.request.urlopen(url)
 
     #load data
     data = json.load(json_file)

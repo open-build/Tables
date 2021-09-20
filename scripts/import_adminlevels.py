@@ -12,7 +12,7 @@ from os.path import exists
 import csv
 import unicodedata
 import sys
-import urllib2
+from urllib.request import urlopen
 from datetime import date
 from activitydb.models import Country, Province, District
 

@@ -13,7 +13,6 @@ from oauth2client.contrib.django_orm import Storage
 from oauth2client.contrib import xsrfutil
 from django.conf import settings
 from django.views.decorators.csrf import csrf_protect
-from .models import GoogleCredentialsModel
 from apiclient.discovery import build
 #import gdata.spreadsheets.client
 
@@ -134,8 +133,6 @@ def export_gsheet(request, id):
         messages.error(request, "A Google Spreadsheet is not selected to import data to it.")
         return HttpResponseRedirect(reverse('list_silos'))
 
-    storage = Storage(GoogleCredentialsModel, 'id', request.user, 'credential')
-    credential = storage.get()
     if credential is None or credential.invalid == True:
         FLOW.params['state'] = xsrfutil.generate_token(settings.SECRET_KEY, request.user)
         authorize_url = FLOW.step1_get_authorize_url()
@@ -178,8 +175,6 @@ def export_gsheet(request, id):
 
 @login_required
 def export_new_gsheet(request, id):
-    storage = Storage(GoogleCredentialsModel, 'id', request.user, 'credential')
-    credential = storage.get()
     if credential is None or credential.invalid == True:
         FLOW.params['state'] = xsrfutil.generate_token(settings.SECRET_KEY, request.user)
         authorize_url = FLOW.step1_get_authorize_url()
@@ -274,17 +269,6 @@ def import_gsheet(request, id):
     if read_url == None or file_id == None:
         messages.error(request, "A Google Spreadsheet is not selected to import data from.")
         return HttpResponseRedirect(reverse('index'))
-
-    storage = Storage(GoogleCredentialsModel, 'id', request.user, 'credential')
-    credential = storage.get()
-    if credential is None or credential.invalid == True:
-        FLOW.params['state'] = xsrfutil.generate_token(settings.SECRET_KEY, request.user)
-        authorize_url = FLOW.step1_get_authorize_url()
-        #FLOW.params.update({'redirect_uri_after_step2': "/export_gsheet/%s/?link=%s&resource_id=%s" % (id, read_url, file_id)})
-        request.session['redirect_uri_after_step2'] = "/import_gsheet/%s/?link=%s&resource_id=%s" % (id, read_url, file_id)
-        return HttpResponseRedirect(authorize_url)
-
-    credential_json = json.loads(credential.to_json())
     user = User.objects.get(username__exact=request.user)
     gsheet_endpoint = None
     read_type = ReadType.objects.get(read_type="GSheet Import")
@@ -325,9 +309,6 @@ def oauth2callback(request):
     if not xsrfutil.validate_token(settings.SECRET_KEY, str(request.GET['state']), request.user):
         return  HttpResponseBadRequest()
 
-    credential = FLOW.step2_exchange(request.GET)
-    storage = Storage(GoogleCredentialsModel, 'id', request.user, 'credential')
-    storage.put(credential)
     #print(credential.to_json())
     redirect_url = request.session['redirect_uri_after_step2']
     return HttpResponseRedirect(redirect_url)

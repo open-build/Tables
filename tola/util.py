@@ -1,4 +1,4 @@
-import urllib2
+from urllib.request import urlopen
 import json
 import base64
 import requests

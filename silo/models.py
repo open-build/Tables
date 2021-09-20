@@ -9,8 +9,6 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.utils import timezone
 from mongoengine import DynamicDocument, IntField, DateTimeField
-from oauth2client.contrib.django_orm import CredentialsField
-from rest_framework.authtoken.models import Token
 
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
@@ -54,7 +52,7 @@ class TolaSites(models.Model):
     tola_report_url = models.CharField(blank=True, null=True, max_length=255)
     tola_activity_user = models.CharField(blank=True, null=True, max_length=255)
     tola_activity_token = models.CharField(blank=True, null=True, max_length=255)
-    site = models.ForeignKey(Site)
+    site = models.ForeignKey(Site, on_delete=models.CASCADE)
     privacy_disclaimer = models.TextField(blank=True, null=True)
     created = models.DateTimeField(auto_now=False, blank=True, null=True)
     updated = models.DateTimeField(auto_now=False, blank=True, null=True)
@@ -117,7 +115,7 @@ class OrganizationAdmin(admin.ModelAdmin):
 
 class Country(models.Model):
     country = models.CharField("Country Name", max_length=255, blank=True)
-    organization = models.ForeignKey(Organization, blank=True, null=True)
+    organization = models.ForeignKey(Organization, blank=True, null=True, on_delete=models.CASCADE)
     code = models.CharField("2 Letter Country Code", max_length=4, blank=True)
     description = models.TextField("Description/Notes", max_length=765,blank=True)
     latitude = models.CharField("Latitude", max_length=255, null=True, blank=True)
@@ -147,8 +145,8 @@ class CountryAdmin(admin.ModelAdmin):
 
 
 class WorkflowLevel1(models.Model):
-    country = models.ForeignKey(Country, blank=True, null=True)
-    organization = models.ForeignKey(Organization, blank=True, null=True)
+    country = models.ForeignKey(Country, blank=True, null=True, on_delete=models.CASCADE)
+    organization = models.ForeignKey(Organization, blank=True, null=True, on_delete=models.CASCADE)
     level1_uuid = models.CharField(max_length=255, verbose_name='WorkflowLevel1 UUID', unique=True)
     name = models.CharField("Name", max_length=255, blank=True)
     create_date = models.DateTimeField(null=True, blank=True)
@@ -176,9 +174,9 @@ class WorkflowLevel1Admin(admin.ModelAdmin):
 
 
 class WorkflowLevel2(models.Model):
-    country = models.ForeignKey(Country, blank=True, null=True)
-    organization = models.ForeignKey(Organization, blank=True, null=True)
-    workflowlevel1 = models.ForeignKey(WorkflowLevel1)
+    country = models.ForeignKey(Country, blank=True, null=True, on_delete=models.CASCADE)
+    organization = models.ForeignKey(Organization, blank=True, null=True, on_delete=models.CASCADE)
+    workflowlevel1 = models.ForeignKey(WorkflowLevel1, on_delete=models.CASCADE)
     level2_uuid = models.CharField(max_length=255, verbose_name='WorkflowLevel2 UUID', unique=True)
     name = models.CharField("Name", max_length=255, blank=True)
     activity_id = models.IntegerField("ID", blank=True, null=True)
@@ -216,12 +214,12 @@ TITLE_CHOICES = (
 class TolaUser(models.Model):
     tola_user_uuid = models.CharField(max_length=255, verbose_name='TolaUser UUID', default=uuid.uuid4, unique=True)
     title = models.CharField(blank=True, null=True, max_length=3, choices=TITLE_CHOICES)
-    organization = models.ForeignKey(Organization, blank=True, null=True)
+    organization = models.ForeignKey(Organization, blank=True, null=True, on_delete=models.CASCADE)
     name = models.CharField("Given Name", blank=True, null=True, max_length=100)
     employee_number = models.IntegerField("Employee Number", blank=True, null=True)
-    user = models.OneToOneField(User, unique=True, related_name='tola_user')
-    country = models.ForeignKey(Country, blank=True, null=True)
-    workflowlevel1 = models.ForeignKey(WorkflowLevel1, blank=True, null=True)
+    user = models.OneToOneField(User, unique=True, related_name='tola_user', on_delete=models.CASCADE)
+    country = models.ForeignKey(Country, blank=True, null=True, on_delete=models.CASCADE)
+    workflowlevel1 = models.ForeignKey(WorkflowLevel1, blank=True, null=True, on_delete=models.CASCADE)
     tables_api_token = models.CharField(blank=True, null=True, max_length=255)
     activity_api_token = models.CharField(blank=True, null=True, max_length=255)
     privacy_disclaimer_accepted = models.BooleanField(default=False)
@@ -247,13 +245,8 @@ class TolaUserAdmin(admin.ModelAdmin):
     search_fields = ('name','country__country','title')
 
 
-class GoogleCredentialsModel(models.Model):
-    id = models.OneToOneField(User, primary_key=True, related_name='google_credentials')
-    credential = CredentialsField()
-
-
 class ThirdPartyTokens(models.Model):
-    user = models.ForeignKey(User, related_name="tokens")
+    user = models.ForeignKey(User, related_name="tokens", on_delete=models.CASCADE)
     name = models.CharField(max_length=60)
     username = models.CharField(max_length=60, null=True)
     token = models.CharField(max_length=255)
@@ -287,8 +280,8 @@ class Read(models.Model):
         (FREQUENCY_WEEKLY, 'Weekly'),
     )
 
-    owner = models.ForeignKey(User)
-    type = models.ForeignKey(ReadType)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE)
+    type = models.ForeignKey(ReadType, on_delete=models.CASCADE)
     read_name = models.CharField(max_length=100, blank=True, default='', verbose_name='source name') #RemoteEndPoint = name
     description = models.TextField(null=True, blank=True)
     read_url = models.CharField(max_length=250, blank=True, default='', verbose_name='source url')
@@ -325,7 +318,7 @@ class ReadAdmin(admin.ModelAdmin):
 
 class Tag(models.Model):
     name = models.CharField(max_length=100)
-    owner = models.ForeignKey(User, related_name='tags')
+    owner = models.ForeignKey(User, related_name='tags', on_delete=models.CASCADE)
     created = models.DateTimeField(auto_now=False, auto_now_add=True)
     updated = models.DateTimeField(auto_now=True, auto_now_add=False)
     # silos = reverse relation Silo.tags
@@ -345,15 +338,15 @@ class FormulaColumn(models.Model):
 
 # Create your models here.
 class Silo(models.Model):
-    owner = models.ForeignKey(User)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE)
     name = models.CharField(max_length=255, blank=False, null=False)
     reads = models.ManyToManyField(Read, related_name='silos')
     tags = models.ManyToManyField(Tag, related_name='silos', blank=True)
     shared = models.ManyToManyField(User, related_name='silos', blank=True)
     share_with_organization = models.BooleanField(default=False)
     description = models.CharField(max_length=255, blank=True, null=True)
-    organization = models.ForeignKey(Organization, blank=True, null=True)
-    country = models.ForeignKey(Country, blank=True, null=True)
+    organization = models.ForeignKey(Organization, blank=True, null=True, on_delete=models.CASCADE)
+    country = models.ForeignKey(Country, blank=True, null=True, on_delete=models.CASCADE)
     workflowlevel1 = models.ManyToManyField(WorkflowLevel1, blank=True)
     public = models.BooleanField()
     form_uuid = models.CharField(max_length=255, verbose_name='CustomForm UUID', null=True, blank=True)
@@ -394,13 +387,13 @@ class Silo(models.Model):
 
 
 class Dashboard(models.Model):
-    table = models.ForeignKey(Silo)
+    table = models.ForeignKey(Silo, on_delete=models.CASCADE)
     name = models.CharField(max_length=255)
     map_lat = models.CharField(max_length=100, blank=True, null=True)
     map_long = models.CharField(max_length=100, blank=True, null=True)
     map_zoom = models.CharField(max_length=10, blank=True, null=True)
     column_charts = models.TextField(default="[]")
-    owner = models.ForeignKey(User, related_name='dashboard')
+    owner = models.ForeignKey(User, related_name='dashboard', on_delete=models.CASCADE)
     created = models.DateTimeField(auto_now=False, auto_now_add=True)
     updated = models.DateTimeField(auto_now=True, auto_now_add=False)
 
@@ -412,7 +405,7 @@ class Dashboard(models.Model):
 
 
 class DeletedSilos(models.Model):
-    user = models.ForeignKey(User)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
     deleted_time = models.DateTimeField()
     silo_name_id = models.CharField(max_length=255)
     silo_description = models.CharField(max_length=255,blank=True,null=True)
@@ -436,7 +429,7 @@ class PIIColumn(models.Model):
     Personally Identifiable Information Column is a column with data, which
     can be used to personally identify someone.
     """
-    owner = models.ForeignKey(User)
+    owner = models.ForeignKey(User, on_delete=models.CASCADE)
     fieldname = models.CharField(blank=True, null=True, max_length=255)
     create_date = models.DateTimeField(auto_now_add=True, editable=False)
 
@@ -454,9 +447,9 @@ class MergedSilosFieldMapping(models.Model):
         (MERGE, 'Merge'),
         (APPEND, 'Append'),
     )
-    from_silo = models.ForeignKey(Silo, related_name='from_mappings')
-    to_silo = models.ForeignKey(Silo, related_name='to_mappings')
-    merged_silo = models.OneToOneField(Silo, related_name='merged_silo_mappings')
+    from_silo = models.ForeignKey(Silo, related_name='from_mappings', on_delete=models.CASCADE)
+    to_silo = models.ForeignKey(Silo, related_name='to_mappings', on_delete=models.CASCADE)
+    merged_silo = models.OneToOneField(Silo, related_name='merged_silo_mappings', on_delete=models.CASCADE)
     merge_type = models.CharField(max_length=60, choices=MERGE_CHOICES, null=True, blank=True)
     mapping = models.TextField()
     create_date = models.DateTimeField(auto_now=False, auto_now_add=True)
@@ -470,7 +463,7 @@ class MergedSilosFieldMapping(models.Model):
 
 class UniqueFields(models.Model):
     name = models.CharField(max_length=254)
-    silo = models.ForeignKey(Silo, related_name='unique_fields')
+    silo = models.ForeignKey(Silo, related_name='unique_fields', on_delete=models.CASCADE)
     created = models.DateTimeField(auto_now=False, auto_now_add=True)
 
     def __str__(self):

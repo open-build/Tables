@@ -1,6 +1,6 @@
 from django.db import models
-from django.contrib.auth.signals import user_logged_in, user_logged_out 
-from urllib2 import urlopen
+from django.contrib.auth.signals import user_logged_in, user_logged_out
+from urllib.request import urlopen
 import json
 
 
@@ -40,6 +40,6 @@ def get_user_country(request):
         response = json.loads(response)
         return response['country'].lower()
 
-    except Exception, e:
+    except Exception as e:
         response = "undefined"
         return response

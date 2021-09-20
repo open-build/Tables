@@ -21,7 +21,6 @@ from oauth2client.contrib.django_orm import Storage
 from oauth2client.contrib import xsrfutil
 from oauth2client.client import AccessTokenCredentialsError
 
-from .models import GoogleCredentialsModel
 from .models import Silo, Read, ReadType, LabelValueStore
 from tola.util import (addColsToSilo, calculateFormulaCell, clean_data_obj,
                        cleanKey, getSiloColumnNames, makeQueryForHiddenRow,
@@ -61,8 +60,7 @@ def _get_oauth_flow():
 
 
 def _get_credential_object(user, prompt=None):
-    storage = Storage(GoogleCredentialsModel, 'id', user, 'credential')
-    credential_obj = storage.get()
+
     if credential_obj is None or credential_obj.invalid == True or prompt:
         flow = _get_oauth_flow()
         flow.params['state'] = xsrfutil.generate_token(settings.SECRET_KEY, user)
@@ -675,9 +673,6 @@ def oauth2callback(request):
         return HttpResponseBadRequest()
 
     flow = _get_oauth_flow()
-    credential = flow.step2_exchange(request.GET)
-    storage = Storage(GoogleCredentialsModel, 'id', request.user, 'credential')
-    storage.put(credential)
     redirect_url = request.session['redirect_uri_after_step2']
     return HttpResponseRedirect(redirect_url)
 
@@ -720,6 +715,4 @@ def store_oauth2_credential(request):
         token_response=data, scopes=flow.scope,
         token_info_uri=flow.token_info_uri)
 
-    storage = Storage(GoogleCredentialsModel, 'id', request.user, 'credential')
-    storage.put(credential)
     return HttpResponse('{"detail": "The credential was successfully saved."}')
