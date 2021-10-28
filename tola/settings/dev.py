@@ -1,4 +1,4 @@
-from local import *
+from .local import *
 
 DEV_APPS = (
     'debug_toolbar',

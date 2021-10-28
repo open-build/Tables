@@ -6,24 +6,27 @@ RUN apk update
 RUN python -m pip install --upgrade pip
 
 RUN apk add --no-cache postgresql-libs bash openldap-dev &&\
-    apk add --no-cache --virtual .build-deps git python-dev gcc musl-dev postgresql-dev libffi-dev libressl-dev
+    apk add --no-cache --virtual .build-deps git python-dev gcc musl-dev postgresql-dev libffi-dev libressl-dev libpython3-dev
 
-COPY . /code
-WORKDIR /code
+COPY ./requirements/base.txt requirements/base.txt
+COPY ./requirements/production.txt requirements/production.txt
+RUN pip install --upgrade pip && pip install -r requirements/production.txt --no-cache-dir
 
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install nginx -y
+ADD . /code
 
-ADD docker/etc/nginx/tables.conf /etc/nginx/conf.d/tables.conf
 
-RUN pip3 install -r requirements/production.txt
+# RUN apt-get update && \
+#     DEBIAN_FRONTEND=noninteractive apt-get install nginx -y
+
+# ADD docker/etc/nginx/tables.conf /etc/nginx/conf.d/tables.conf
+
+
+# Collecting static files
+RUN ./scripts/collectstatic.sh
+
+RUN apk del .build-deps
 
 EXPOSE 8080
 
-# Collecting static files
-RUN ./collectstatic.sh
-
-ARG BRANCH=None
-ENV branch=${BRANCH}
 
 ENTRYPOINT ["/code/docker-entrypoint.sh"]

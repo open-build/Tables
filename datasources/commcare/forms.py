@@ -1,4 +1,4 @@
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from django.forms import ModelForm
 from django import forms
 from crispy_forms.helper import FormHelper

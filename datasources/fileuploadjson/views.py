@@ -7,7 +7,7 @@ from django.http import HttpResponseRedirect
 from django.utils import timezone
 from django.shortcuts import render
 from tola.util import save_data_to_silo
-from django.core.urlresolvers import reverse, reverse_lazy
+from django.urls import reverse, reverse_lazy
 
 from django.contrib import messages
 

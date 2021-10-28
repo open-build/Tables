@@ -9,7 +9,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ImproperlyConfigured
-from django.core.urlresolvers import reverse, reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.http import (HttpResponseRedirect, HttpResponseBadRequest,
                          JsonResponse, HttpResponseNotAllowed, HttpResponse)
 from django.utils import timezone

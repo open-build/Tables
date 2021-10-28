@@ -12,7 +12,7 @@ from datetime import datetime
 from django.core.mail import send_mail
 from django.contrib.sites.shortcuts import get_current_site
 
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.conf import settings
 
 import requests

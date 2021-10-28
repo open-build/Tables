@@ -16,7 +16,7 @@ class RegistrationForm(UserChangeForm):
         user = kwargs.pop('initial')
         super(RegistrationForm, self).__init__(*args, **kwargs)
         del self.fields['password']
-        print user['username'].is_superuser
+        print(user['username'].is_superuser)
         # allow country access change for now until we know how we will
         # use this GWL 012617 if they aren't a super user or User Admin
         # don't let them change countries form field if 'User Admin' not in

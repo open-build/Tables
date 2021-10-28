@@ -8,6 +8,6 @@ from util import getImportAppsVerbose
 register = template.Library()
 
 
-@register.assignment_tag
+@register.simple_tag
 def getDataImports():
     return getImportAppsVerbose()

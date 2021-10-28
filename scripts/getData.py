@@ -17,7 +17,7 @@ from datetime import date
 from activitydb.models import Country, Program
 
 def run():
-    print "Uploading JSON data"
+    print("Uploading JSON data")
 
 type = "Program"
 program_country = 1
@@ -32,7 +32,7 @@ def getAllData(url, type, program_country):
     data = json.load(json_file)
     json_file.close()
 
-    #print data
+    #print(data)
 
     #query to mysql database after parsing json data
     def saveCountries(keys_to_sql, vars_to_sql):
@@ -41,7 +41,7 @@ def getAllData(url, type, program_country):
         keys_to_sql = ", ".join(map(str, keys_to_sql))
 
         query = "INSERT INTO activitydb_country (country,code) VALUES ('%s','%s')" % (vars_to_sql[0], vars_to_sql[1])
-        print query
+        print(query)
 
         try:
             cursor.execute(query)
@@ -69,10 +69,10 @@ def getAllData(url, type, program_country):
         keys_to_sql = ", ".join(map(str, keys_to_sql))
 
         var_to_tuple = tuple(vars_to_sql)
-        print var_to_tuple
+        print(var_to_tuple)
 
         query = "INSERT INTO activitydb_program (%s) VALUES %s" % (keys_to_sql, var_to_tuple)
-        print query
+        print(query)
 
         try:
             cursor.execute(query)
@@ -85,7 +85,7 @@ def getAllData(url, type, program_country):
 
         query2 = "INSERT INTO activitydb_program_country (country_id,program_id) VALUES (%s,%s)" % (program_country, latest.id)
 
-        print query2
+        print(query2)
         try:
             cursor.execute(query2)
             transaction.commit()
@@ -95,7 +95,7 @@ def getAllData(url, type, program_country):
 
 
     for row in data:
-        print row
+        print(row)
         vars_to_sql = []
         keys_to_sql = []
         for new_key, new_value in row.iteritems():
@@ -104,8 +104,8 @@ def getAllData(url, type, program_country):
                 new_value = new_value.encode('ascii','ignore')
             except Exception, err:
                 sys.stderr.write('ERROR: %s\n' % str(err))
-            #print new_key
-            #print new_value
+            #print(new_key)
+            #print(new_value)
             if type == "Country":
                 if new_value:
                     #country or region related columns only
@@ -145,16 +145,16 @@ def getAllData(url, type, program_country):
             savePrograms(keys_to_sql, vars_to_sql, program_country)
 
 # get an updated json data file for the hub and update or insert new records
-#print "Country"
+#print("Country")
 #getAllData("https://mcapi.mercycorps.org/authoritativecountry/?gait=True&format=json", "Country")
 
 #get an updated json data file for the hub and update or insert new records
-print "Program"
+print("Program")
 getCountries = Country.objects.all()
 for country in getCountries:
-    print country.country
+    print(country.country)
     program_url = "http://mcapi.mercycorps.org/gaitprogram/?country=%s&format=json" % (country.country)
-    print program_url
+    print(program_url)
     getAllData(program_url, "Program", country.id)
 
-print "Alright, all done."
+print("Alright, all done.")

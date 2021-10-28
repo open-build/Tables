@@ -16,7 +16,7 @@ from pymongo import MongoClient
 from django.conf import settings
 from django.core import files
 from django.core.exceptions import ImproperlyConfigured, ValidationError
-from django.core.urlresolvers import reverse_lazy
+from django.urls import reverse_lazy
 from django.http import HttpResponseBadRequest,\
     HttpResponse, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render
@@ -1317,7 +1317,7 @@ def newColumn(request,id):
             messages.info(request, 'Your column has been added', fail_silently=False)
         else:
             messages.error(request, 'There was a problem adding your column', fail_silently=False)
-            #print form.errors
+            #print(form.errors)
 
 
     return render(request, "silo/new-column-form.html", {'silo':silo,'form': form})
@@ -1562,7 +1562,7 @@ def valueEdit(request,id):
             lvs.save()
             return HttpResponseRedirect('/silo_detail/' + str(silo_id))
         else:
-            print "not valid"
+            print("not valid")
     else:
         form = MongoEditForm(initial={'silo_id': silo_id, 'id': id}, extra=data, silo_pk=silo_id)
 

@@ -1,6 +1,6 @@
-from base import *
+from .base import *
 
-from fabric.api import cd, env, run
+# from fabric.api import cd, env, run
 
 NOTIFICATION_SENDER = os.getenv('NOTIFICATION_SENDER')
 
@@ -123,15 +123,15 @@ CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL')
 CELERY_RESULT_BACKEND = os.getenv('CELERY_BROKER_URL')
 
 # Hosts to deploy onto
-env.hosts = ['.toladata.io', '.tola.io']
+# env.hosts = ['.toladata.io', '.tola.io']
 
 # Where your project code lives on the server
-env.project_root = DJANGO_ROOT
+# env.project_root = DJANGO_ROOT
 
 
-def deploy_static():
-    with cd(env.project_root):
-        run('./manage.py collectstatic -v0 --noinput')
+# def deploy_static():
+#     with cd(env.project_root):
+#         run('./manage.py collectstatic -v0 --noinput')
 
 
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')

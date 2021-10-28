@@ -5,7 +5,7 @@ ENV PYTHONUNBUFFERED 1
 RUN apk update
 RUN python -m pip install --upgrade pip
 
-RUN apk add --no-cache postgresql-libs bash openldap-dev &&\
+RUN apk add --no-cache postgresql-libs bash openldap-dev make &&\
     apk add --no-cache --virtual .build-deps git python-dev gcc musl-dev postgresql-dev libffi-dev libressl-dev
 
 WORKDIR /code
@@ -14,12 +14,16 @@ COPY ./requirements/base.txt requirements/base.txt
 COPY ./requirements/dev.txt requirements/dev.txt
 COPY ./requirements/production.txt requirements/production.txt
 
-RUN pip3 install -r requirements/production.txt
-RUN pip3 install -r requirements/dev.txt
+RUN pip install --upgrade pip && pip install -r requirements/production.txt
+RUN pip install --upgrade pip && pip install -r requirements/dev.txt
 
 ADD . /code
 
 # Collecting static files
-RUN ./collectstatic.sh
+RUN ./scripts/collectstatic.sh
+
+RUN apk del .build-deps
+
+EXPOSE 8080
 
 ENTRYPOINT ["/code/docker-entrypoint-dev.sh"]

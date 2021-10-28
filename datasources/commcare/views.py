@@ -8,7 +8,7 @@ from django.http import HttpResponseRedirect, HttpResponseBadRequest, HttpRespon
 
 from tola.util import getSiloColumnNames
 from django.shortcuts import redirect, render
-from django.core.urlresolvers import reverse, reverse_lazy
+from django.urls import reverse, reverse_lazy
 
 from django.contrib import messages
 from django.utils import timezone

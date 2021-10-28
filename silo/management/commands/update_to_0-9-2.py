@@ -34,7 +34,7 @@ class Command(BaseCommand):
 
         for silo in silos:
             siloCounter += 1
-            print 'Processing silo %s of %s: %s (%s)' % (siloCounter, siloCount, silo, silo.id)
+            print('Processing silo %s of %s: %s (%s)' % (siloCounter, siloCount, silo, silo.id))
 
             keys = set()
             keys_collect = db.label_value_store.map_reduce(
@@ -77,8 +77,8 @@ class Command(BaseCommand):
             silo.save()
 
         if len(errors):
-            print '\nIndexing Errors'
-            print '\n'.join(errors)
+            print('\nIndexing Errors')
+            print('\n'.join(errors))
 
         #delete all reads that are no longer associated with a silo
         reads = Read.objects.all()

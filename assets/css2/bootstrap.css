@@ -188,7 +188,7 @@ th {
   padding: 0;
 }
 /*! Source: https://github.com/h5bp/html5-boilerplate/blob/master/src/css/main.css */
-@media print {
+@media print({)
   *,
   *:before,
   *:after {
@@ -2569,7 +2569,7 @@ output {
 .form-control:focus {
   border-color: #bfd7e0;
   outline: 0;
-  -webkit-box-shadow: inset 0 
+  -webkit-box-shadow: inset 0
           box-shadow: inset 0 @border-width @border-width rgba(0,0,0,.075), 0 0 8px rgba(77, 178, 209, .6);@border-width @border-width rgba(0,0,0,.075), 0 0 8px rgba(77, 178, 209, .6);
 }
 .form-control::-moz-placeholder {
@@ -6713,28 +6713,28 @@ button.close {
     display: none !important;
   }
 }
-.visible-print {
+.visible-print({)
   display: none !important;
 }
-@media print {
-  .visible-print {
+@media print({)
+  .visible-print({)
     display: block !important;
   }
-  table.visible-print {
+  table.visible-print({)
     display: table !important;
   }
-  tr.visible-print {
+  tr.visible-print({)
     display: table-row !important;
   }
   th.visible-print,
-  td.visible-print {
+  td.visible-print({)
     display: table-cell !important;
   }
 }
 .visible-print-block {
   display: none !important;
 }
-@media print {
+@media print({)
   .visible-print-block {
     display: block !important;
   }
@@ -6742,7 +6742,7 @@ button.close {
 .visible-print-inline {
   display: none !important;
 }
-@media print {
+@media print({)
   .visible-print-inline {
     display: inline !important;
   }
@@ -6750,13 +6750,13 @@ button.close {
 .visible-print-inline-block {
   display: none !important;
 }
-@media print {
+@media print({)
   .visible-print-inline-block {
     display: inline-block !important;
   }
 }
-@media print {
-  .hidden-print {
+@media print({)
+  .hidden-print({)
     display: none !important;
   }
 }

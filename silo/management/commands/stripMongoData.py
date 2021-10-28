@@ -44,7 +44,7 @@ class Command(BaseCommand):
                         smart_str(record[key]),
                         smart_str(key),
                         record['_id'])
-                    print diff
+                    print(diff)
                     if (random.random() > .99 and len(diff_samples) <=15) \
                             or str(record['_id']) in diff_include:
                         diff_samples.append(diff)
@@ -77,23 +77,23 @@ class Command(BaseCommand):
 
             counter += 1
 
-        print '\n#########################################'
-        print '#########################################'
-        print ''
-        print '\nDiff samples:'
-        print '\n'.join(diff_samples)
-        print ''
-        print 'Records count before', row_count_before
-        print 'Records count after', db.label_value_store.count()
-        print '\n%s records examined\n' % counter
-        print '%s silos with extra whitespace:' % len(found_silos)
-        print ', '.join(sorted([str(i) for i in found_silos]))
-        print '\nMultimods (hopefully empty):', multi_mod
-        print ''
-        print '%s records updated.  If value is 0 you may not have used the --write option.\n' % len(records_updated)
+        print('\n#########################################')
+        print('#########################################')
+        print('')
+        print('\nDiff samples:')
+        print('\n'.join(diff_samples))
+        print('')
+        print('Records count before', row_count_before)
+        print('Records count after', db.label_value_store.count())
+        print('\n%s records examined\n' % counter)
+        print('%s silos with extra whitespace:' % len(found_silos))
+        print(', '.join(sorted([str(i) for i in found_silos])))
+        print('\nMultimods (hopefully empty):', multi_mod)
+        print('')
+        print('%s records updated.  If value is 0 you may not have used the --write option.\n' % len(records_updated))
         if len(problem_silos) > 0:
-            print "These silos had extra whitespace and are on the auto-push list:"
+            print("These silos had extra whitespace and are on the auto-push list:")
             for silo in problem_silos:
-                print 'silo_id %s: %s' % (silo, ', '.join(problem_silos[silo]))
+                print('silo_id %s: %s' % (silo, ', '.join(problem_silos[silo])))
         else:
-            print "There were no silos that had extra whitespace and that were auto-push"
+            print("There were no silos that had extra whitespace and that were auto-push")

@@ -3,11 +3,6 @@ version: "2.1"
 services:
   postgres:
     image: postgres:9.6
-    healthcheck:
-      test: "pg_isready -h localhost -p 5432 -q -U postgres"
-      interval: 3s
-      timeout: 5s
-      retries: 5
     environment:
       - POSTGRES_DB=tolatables
       - POSTGRES_USER=root
@@ -25,11 +20,11 @@ services:
 
   mongo:
     container_name: mongo
-    healthcheck:
-      test: "mongo 127.0.0.1:27017 --eval 'db.stats().ok'  --quiet || exit 1"
-      interval: 3s
-      timeout: 10s
-      retries: 3
+    # healthcheck:
+    #   test: "mongo 127.0.0.1:27017 --eval 'db.stats().ok'  --quiet || exit 1"
+    #   interval: 3s
+    #   timeout: 10s
+    #   retries: 3
     image: mongo:3.4.10
     environment:
       - MONGO_LOG_DIR=/dev/null
@@ -48,10 +43,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.dev
+    entrypoint: bash /code/scripts/run-standalone-dev.sh
     container_name: tables
     image: tables
     volumes:
       - .:/code
+      - static-content:/static
     ports:
       - "8080:8080"
     depends_on:
@@ -81,3 +78,5 @@ services:
       - CELERY_BROKER_URL=redis://redis@redis:6379/0
       - ONEDRIVE_REDIRECT_URI=http://localhost:8080/onedrive
       - ONEDRIVE_CLIENT_ID=REPLACETHIS
+volumes:
+  static-content:

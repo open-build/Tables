@@ -3,7 +3,7 @@ $(function () {
   $('[data-toggle="tooltip"]').tooltip()
 })
 
-//custom jquery to trigger dat picker, info pop-over and print category text
+//custom jquery to trigger dat picker, info pop-over and print(category text)
 $(document).ready(function() {
     $('.datepicker').datepicker();
     $('.btn-del').click(function(e) {

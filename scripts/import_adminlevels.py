@@ -17,7 +17,7 @@ from datetime import date
 from activitydb.models import Country, Province, District
 
 def run():
-    print "Uploading Country Admin data"
+    print("Uploading Country Admin data")
 
 country_id = 4
 
@@ -30,12 +30,12 @@ def getAllData():
             new_district = ""
             for column in row:
                 if column_num == 1:
-                    print "new_district="
+                    print("new_district=")
                     new_district = column.replace('\n', ' ')
-                    print new_district
+                    print(new_district)
                 else:
-                    print "query for province="
-                    print column
+                    print("query for province=")
+                    print(column)
                     getProvince = Province.objects.get(name=column, country=country_id)
                     if getProvince:
                         new_dist = District(name=new_district, province=getProvince)

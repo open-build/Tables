@@ -1,6 +1,6 @@
 import os, logging, httplib2, json, datetime
 
-from django.core.urlresolvers import reverse, reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.http import HttpResponseRedirect, HttpResponseBadRequest, JsonResponse
 
 from django.contrib import messages
@@ -227,7 +227,7 @@ def import_from_google_spreadsheet(credential_json, silo, spreadsheet_key):
     worksheet_key = worksheets_feed.entry[0].id.text.rsplit("/", 1)[1]
 
     ws = worksheets_feed.entry[0]
-    #print '%s - rows %s - cols %s\n' % (ws.title.text, ws.row_count.text, ws.col_count.text)
+    #print('%s - rows %s - cols %s\n' % (ws.title.text, ws.row_count.text, ws.col_count.text))
     lvs = LabelValueStore()
 
     list_feed = sp_client.get_list_feed(spreadsheet_key, worksheet_key)

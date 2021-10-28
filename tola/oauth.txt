@@ -105,9 +105,9 @@ class MicrosoftOAuth2(BaseOAuth2):
             )
 
         except Exception as inst:
-            print type(inst)  # the exception instance
-            print inst.args  # arguments stored in .args
-            print inst
+            print(type(inst)  # the exception instance)
+            print(inst.args  # arguments stored in .args)
+            print(inst)
         print("response "+str(response))
         self.process_error(response)
         return self.do_auth(response['access_token'], response=response,
